@@ -13,5 +13,6 @@ typedef struct token_s {
 
 void process_update_command(conn *c, token_t *tokens, const size_t ntokens, int comm, bool handle_cas);
 void process_get_command(conn *c, token_t *tokens, size_t ntokens, bool return_cas, bool should_touch);
+void process_get_command_mem_only(conn *c, token_t *tokens, size_t ntokens, bool return_cas, bool should_touch);
 bool process_update_command_sep(void *storage, char* key, char* value, int key_n, int value_n, bool load);
 #endif

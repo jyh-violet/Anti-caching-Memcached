@@ -111,9 +111,11 @@ static void conn_free(conn *c);
 
 #ifdef YCSB
 typedef struct IndexAttributes IndexAttributes;
+typedef struct FailedTxn FailedTxn;
 void ycsb(void );
 void loadData(IndexAttributes* attributes);
 void transaction(IndexAttributes* attributes);
+void handleFailed(IndexAttributes* attributes);
 void test(void);
 void ycsb_load_run_randint(const char* init_file, const char* txn_file);
 #endif
@@ -6393,7 +6395,15 @@ struct IndexAttributes{
     uint64_t read;
     uint64_t miss;
     uint64_t txnCount;
+    FailedTxn *failedTxn;
     double usedTime;
+};
+
+struct FailedTxn{
+    uint64_t * array;
+    uint64_t end;
+    uint64_t start;
+    uint64_t arraySize;
 };
 char* value = NULL;
 char* prefix = "";
@@ -6662,6 +6672,8 @@ void transaction(IndexAttributes* attributes){
                                     attributes->ssdRead ++;
                                 } else{
                                     attributes->readFail++;
+                                    attributes->failedTxn->array[attributes->failedTxn->end % attributes->failedTxn->arraySize] = opIndex;
+                                    attributes->failedTxn->end++;
                                 }
                             } else{
                                 attributes->DRAMhit ++;
@@ -6686,6 +6698,114 @@ void transaction(IndexAttributes* attributes){
 //    fprintf(logfile,"thread:%d, setFailed:%d, readFailed:%d, cacheFault:%d\n",
 //            attributes->threadId, setFailed, readFailed, cacheFault);
 //    attributes->failed = setFailed + readFailed;
+    conn_close(c);
+    conn_free(c);
+    close(sfd);
+}
+
+void handleFailed(IndexAttributes* attributes){
+    storage_write_threadId = __sync_fetch_and_add(&storage_write_id, 1);
+    slab_span = slabNum;
+    slab_min = 0;
+
+    per_thread_counter = slab_span;
+    slab_index =  0;
+
+    thread_type = HANDLE;
+
+    attributes->miss  = 0;
+    attributes->readFail = 0;
+    attributes->txnWriteFail = 0;
+    attributes->writeFail = 0;
+    attributes->ssdRead = 0;
+    attributes->txnCount = 0;
+    attributes->read = 0;
+
+    attributes->failed = 0;
+    attributes->DRAMhit = 0;
+    attributes->NVMhit = 0;
+    attributes->wbufhit = 0;
+
+    int sfd = threadNum + 1 + 13;
+
+    conn* c = conn_new(sfd, conn_listening, EV_READ | EV_PERSIST, 1,
+                       local_transport, main_base, NULL);
+    LIBEVENT_THREAD thread;
+    token_t tokens[10];
+    memset(&thread, 0, sizeof (LIBEVENT_THREAD));
+    thread.storage = ext_storage;
+    setup_thread(&thread);
+    thread.l = logger_create();
+    thread.lru_bump_buf = item_lru_bump_buf_create();
+    c->thread = &thread;
+    conn_io_queue_setup(c);
+    struct timespec startTmp, endTmp;
+    int opIndex = 0;
+    if(!resp_start(c)){
+        fprintf(logfile,"thread:%d, resp_start error\n", attributes->threadId);
+        return;
+    }
+    fprintf(stderr, "transaction(%ld), slab_index:%d, per_thread_counter:%d, io_ctx:%p\n",
+            pthread_self(), slab_index, per_thread_counter, c->resp->io_ctx);
+    clock_gettime(CLOCK_REALTIME, &startTmp);
+#ifndef UPDATE_TO_NVM
+    char* cmd = "set";
+    char* exp = "0";
+    char* flag = "0";
+    char valueLen[10];
+    itoa_32(value_len, valueLen);
+#endif
+
+    while (!endWork){
+        int success = 0;
+        for (int i = 0; i < threadNum; ++i) {
+            FailedTxn* failedTxn = &attributes->failedTxn[i];
+            if(failedTxn->end > failedTxn->start){
+                opIndex = failedTxn->array[failedTxn->start % failedTxn->arraySize];
+                failedTxn->start ++;
+            } else{
+                continue;
+            }
+            attributes->read++;
+            char* cmd_r = "get";
+            tokens[0].value = cmd_r;
+            tokens[0].length = 3;
+#ifdef strKey
+            tokens[1].value = txn_keys[opIndex];
+            tokens[1].length = keyMaxLen;
+#else
+            tokens[1].value = (char*) &txn_keys[opIndex];
+            tokens[1].length = sizeof (uint64_t);
+#endif
+            tokens[2].value = NULL;
+            tokens[2].length = 0;
+            c->state = conn_parse_cmd;
+            process_get_command_mem_only(c, tokens, 2, false, false);
+
+            if(c->resp->itemFlag & ITEM_NULL){
+                attributes->miss ++;
+                break;
+            }
+
+            if( c->resp){
+                if(c->resp->itemFlag & ITEM_NVM){
+                    success ++;
+                    attributes->NVMhit ++;
+                } else if( (c->resp->itemFlag & ITEM_HDR)){
+                    attributes->readFail ++;
+                } else{
+                    attributes->DRAMhit ++;
+                    success ++;
+                }
+            }
+            break;
+        }
+        if(success == 0){
+            usleep(5000);
+        }
+    }
+
+    clock_gettime(CLOCK_REALTIME, &endTmp);
     conn_close(c);
     conn_free(c);
     close(sfd);
@@ -6760,6 +6880,12 @@ void test(void ){
     IndexAttributes attributes[MaxThreadNum];
     taskNum = 0;
     perTask = LOAD_SIZE / settings.ext_io_threadcount;
+    FailedTxn failedTxNs[MaxThreadNum];
+    for (int i = 0; i < threadNum; ++i) {
+        failedTxNs[i].array = malloc(RUN_SIZE / threadNum / 10 * sizeof (uint64_t));
+        failedTxNs[i].end = failedTxNs[i].start = 0;
+        failedTxNs[i].arraySize = RUN_SIZE / threadNum / 10;
+    }
     for (int i = 0; i < settings.ext_io_threadcount; ++i) {
         attributes[i].threadId = i;
         pthread_create(threadId + i, NULL, (void *(*)(void *))(loadData), (void *) (attributes + i));
@@ -6788,9 +6914,14 @@ void test(void ){
     inTxn = true;
     for (int i = 0; i < threadNum; ++i) {
         attributes[i].threadId = i;
-
+        attributes[i].failedTxn = &failedTxNs[i];
         pthread_create(threadId + i, NULL, (void *(*)(void *))(transaction), (void *) (attributes + i));
     }
+
+    IndexAttributes handleAttribute;
+    handleAttribute.failedTxn = failedTxNs;
+    pthread_t handleId;
+    pthread_create(&handleId, NULL, (void *(*)(void *))(handleFailed), (void *) (&handleAttribute));
     sleep(txnTime);
     endWork = true;
     clock_end = 1;
@@ -6808,7 +6939,6 @@ void test(void ){
         ssdRead += attributes[i].ssdRead;
         txnCount += attributes[i].txnCount;
     }
-
 
     fprintf(logfile,"%d, %ld,  %ld, %d, %d, %d, %d, %d, "
                     "%ld, %ld, %.2f, %d, %.3f, "
@@ -6844,7 +6974,6 @@ void test(void ){
                     init_file,
                     toDRAMswap, toNVMswap, cacheFault, flushToNVM, flushToSSD,
                     DRAMhit, NVMhit, wbufhit, miss, ssdRead, read, swapOp, writeFail, NVMtoDRAMswap, SSDread);
-
 }
 
 

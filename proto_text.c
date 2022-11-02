@@ -780,6 +780,154 @@ stop:
     }
 }
 
+inline void process_get_command_mem_only(conn *c, token_t *tokens, size_t ntokens, bool return_cas, bool should_touch) {
+    char *key;
+    size_t nkey;
+    item *it;
+    token_t *key_token = &tokens[KEY_TOKEN];
+    rel_time_t exptime = 0;
+    assert(c != NULL);
+    mc_resp *resp = c->resp;
+
+    {
+        while(key_token->length != 0) {
+            bool overflow; // not used here.
+            key = key_token->value;
+            nkey = key_token->length;
+
+            if (nkey > KEY_MAX_LENGTH) {
+                return;
+            }
+
+            it = limited_get(key, nkey, c, exptime, should_touch, DO_UPDATE, &overflow);
+            if (settings.detail_enabled) {
+                stats_prefix_record_get(key, nkey, NULL != it);
+            }
+            if (it) {
+                /*
+                 * Construct the response. Each hit adds three elements to the
+                 * outgoing data list:
+                 *   "VALUE "
+                 *   key
+                 *   " " + flags + " " + data length + "\r\n" + data (with \r\n)
+                 */
+
+                {
+                    MEMCACHED_COMMAND_GET(c->sfd, ITEM_key(it), it->nkey,
+                                          it->nbytes, ITEM_get_cas(it));
+                    int nbytes = it->nbytes;;
+                    nbytes = it->nbytes;
+                    char *p = resp->wbuf;
+                    memcpy(p, "VALUE ", 6);
+                    p += 6;
+                    memcpy(p, ITEM_key(it), it->nkey);
+                    p += it->nkey;
+                    p += make_ascii_get_suffix(p, it, return_cas, nbytes);
+                    resp_add_iov(resp, resp->wbuf, p - resp->wbuf);
+
+#ifdef ENABLE_NVM
+                    resp->itemFlag = it->it_flags;
+                    if (it->it_flags & ITEM_NVM) {
+#ifdef DRAM_CACHE
+                        item_hdr * hdr = (item_hdr*)ITEM_data(it);
+                        if(hdr->cache_item != NULL){
+                            resp->itemFlag &= (~ITEM_NVM);
+                            char data[it->nbytes];
+                            memcpy(data, ITEM_data(hdr->cache_item), it->nbytes);
+                        } else{
+                            char data[it->nbytes];
+                            memcpy(data, hdr->nvmptr, it->nbytes);
+                        }
+#else
+                        char data[it->nbytes];
+                        memcpy(data, ((item_hdr *)ITEM_data(it))->nvmptr, it->nbytes);
+#endif
+                    } else if(it->it_flags & ITEM_HDR){
+
+                    }else if ((it->it_flags & ITEM_CHUNKED) == 0) {
+#ifdef ENABLE_NVM
+                        char data[it->nbytes];
+                        memcpy(data, ITEM_data(it), it->nbytes);
+#ifdef NVM_AS_DRAM
+                        //                      fprintf(stderr, "it:%p, NVM_base:%p, NVM_len:%ld\n", (void*)it, (void*)NVM_base, NVM_len);
+                        if(((char*)it) >= NVM_base && ((char*)it) < (NVM_base + NVM_len)){
+                            resp->itemFlag |= ITEM_NVM;
+                        }
+#endif
+#else
+                        resp_add_iov(resp, ITEM_data(it), it->nbytes);
+#endif
+                    } else {
+                        resp_add_chunked_iov(resp, it, it->nbytes);
+                    }
+#elif defined(EXTSTORE)
+                    if (it->it_flags & ITEM_HDR) {
+                        if (storage_get_item(c, it, resp) != 0) {
+                            pthread_mutex_lock(&c->thread->stats.mutex);
+                            c->thread->stats.get_oom_extstore++;
+                            pthread_mutex_unlock(&c->thread->stats.mutex);
+
+                            item_remove(it);
+                            goto stop;
+                        }
+                    } else if ((it->it_flags & ITEM_CHUNKED) == 0) {
+                        resp_add_iov(resp, ITEM_data(it), it->nbytes);
+                    } else {
+                        resp_add_chunked_iov(resp, it, it->nbytes);
+                    }
+#else
+                    if ((it->it_flags & ITEM_CHUNKED) == 0) {
+                        resp_add_iov(resp, ITEM_data(it), it->nbytes);
+                    } else {
+                        resp_add_chunked_iov(resp, it, it->nbytes);
+                    }
+#endif
+                }
+
+#ifdef YCSB
+                item_remove(it);
+                resp->item = NULL;
+#else
+                /* item_get() has incremented it->refcount for us */
+                pthread_mutex_lock(&c->thread->stats.mutex);
+                if (should_touch) {
+                    c->thread->stats.touch_cmds++;
+                    c->thread->stats.slab_stats[ITEM_clsid(it)].touch_hits++;
+                } else {
+                    c->thread->stats.lru_hits[it->slabs_clsid]++;
+                    c->thread->stats.get_cmds++;
+                }
+                pthread_mutex_unlock(&c->thread->stats.mutex);
+#ifdef EXTSTORE
+                /* If ITEM_HDR, an io_wrap owns the reference. */
+                if ((it->it_flags & ITEM_HDR) == 0) {
+                    resp->item = it;
+                }
+#else
+                resp->item = it;
+#endif
+#endif
+
+            } else {
+#ifndef ENABLE_NVM
+                pthread_mutex_lock(&c->thread->stats.mutex);
+                if (should_touch) {
+                    c->thread->stats.touch_cmds++;
+                    c->thread->stats.touch_misses++;
+                } else {
+                    c->thread->stats.get_misses++;
+                    c->thread->stats.get_cmds++;
+                }
+                MEMCACHED_COMMAND_GET(c->sfd, key, nkey, -1, 0);
+                pthread_mutex_unlock(&c->thread->stats.mutex);
+#else
+                resp->itemFlag = ITEM_NULL;
+#endif
+            }
+        }
+    }
+}
+
 inline static void process_stats_detail(conn *c, const char *command) {
     assert(c != NULL);
 
