@@ -6686,10 +6686,6 @@ void transaction(IndexAttributes* attributes){
                         fprintf(stderr, "not support operation:%d, opIndex:%d\n", operations[opIndex], opIndex);
             }
         }
-        if(tNum % 100 == 0){
-            fprintf(stderr, "thread:%d, tNum:%ld, readFail:%ld, writeFail:%ld, ssdRead:%ld\n",
-                    attributes->threadId, tNum, attributes->readFail, attributes->writeFail, attributes->ssdRead);
-        }
         tNum = __sync_fetch_and_add(&taskNum, 1);
     }
 
@@ -6956,9 +6952,9 @@ void test(void ){
            DRAMhit, NVMhit, wbufhit, miss, ssdRead, read, swapOp, writeFail, NVMtoDRAMswap, SSDread);
     fprintf(stderr,"flag, LOAD_SIZE, RUN_SIZE, threadNum, value_len, io_threads, hashPower, wbuf_size \\\\"
                    "nvm_limit, dram_limit, freeRatio, HOT_ITEM_R_COUNT, CLOCK_INTERVAL, \\\\"
-                    "initFailed, txnFailed, txnTime, load_thp, txn_thp, file, \\\\"
+                    "initTries, txnTries, txnTime, load_thp, txn_thp, file, \\\\"
                     "toDRAMswap, toNVMswap, cacheFault, flushToNVM, flushToSSD, \\\\"
-                    "DRAMhit, NVMhit, wbufhit, miss, ssdRead, read, swapOp, writeFail, NVMtoDRAMswap, SSDread\n");
+                    "DRAMhit, NVMhit, wbufhit, miss, ssdRead, read, swapOp, writeTries, NVMtoDRAMswap, SSDread\n");
 
     fprintf(stderr,"%d, %ld,  %ld, %d, %d, %d, %d, %d, \\\\"
                    "%ld, %ld, %.2f, %d, %.3f, \\\\"
