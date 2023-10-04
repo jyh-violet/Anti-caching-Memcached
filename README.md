@@ -76,8 +76,7 @@ TXN_FILE = "memcached_client/workloads/data/txnsc_zipf_int_50M.dat"
 # run
 
 ```console
-./memcached -m 4096 -I 2048 -o slab_automove_freeratio=0.2 -o nvm_path=nvm.bin:32G -o ext_path=ssd.bin:120G  -t 32 -o ext_threads=16 -P /tmp/memcached.pid 2>out
-```
+./memcached -m 4096 -o slab_automove_freeratio=0.2 -o nvm_path=nvm.bin:32G -o ext_path=ssd.bin:120G  -t 32 -o ext_threads=8 2>out
 
 parameters:
 

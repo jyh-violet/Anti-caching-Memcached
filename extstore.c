@@ -884,9 +884,6 @@ int extstore_write_request(void *ptr, unsigned int bucket,
         pthread_mutex_lock(&e->mutex);
         if(p == e->page_buckets[local_bucket]){
             _allocate_page(e, local_bucket, free_bucket);
-            if(false)
-                fprintf(stderr, "bucket:%d allocate new page:%d, free_bucket:%d, p->wbuf:%p\n",
-                    local_bucket, p->id, free_bucket, (void *)p->wbuf);
         }
         pthread_mutex_unlock(&e->mutex);
         return ret;

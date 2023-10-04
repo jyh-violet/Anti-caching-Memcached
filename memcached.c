@@ -239,7 +239,7 @@ void stats_reset(void) {
 }
 
 static void settings_init(void) {
-    settings.use_cas = true;
+    settings.use_cas = false;
     settings.access = 0700;
     settings.port = 11211;
     settings.udpport = 0;
@@ -278,7 +278,7 @@ static void settings_init(void) {
     settings.binding_protocol = negotiating_prot;
     settings.item_size_max = 1024 * 1024; /* The famous 1MB upper limit. */
     settings.slab_page_size = 1024 * 1024; /* chunks are split from 1MB pages. */
-    settings.slab_chunk_size_max = settings.slab_page_size / 2;
+    settings.slab_chunk_size_max = 2048;
     settings.sasl = false;
     settings.maxconns_fast = true;
     settings.lru_crawler = false;
@@ -6114,10 +6114,15 @@ int main (int argc, char **argv) {
     if (start_assoc_maint && start_assoc_maintenance_thread() == -1) {
         exit(EXIT_FAILURE);
     }
+#ifdef YCSB
+    if (start_lru_crawler) {
+    }
+#else
     if (start_lru_crawler && start_item_crawler_thread() != 0) {
         fprintf(stderr, "Failed to enable LRU crawler thread\n");
         exit(EXIT_FAILURE);
     }
+#endif
 #ifdef ENABLE_NVM
 
     if (settings.nvm_file != NULL){
@@ -6174,12 +6179,11 @@ int main (int argc, char **argv) {
         free(meta);
         return 1;
     }
-
+#ifndef YCSB
     if (settings.slab_reassign &&
         start_slab_maintenance_thread() == -1) {
         exit(EXIT_FAILURE);
     }
-#ifndef YCSB
     if (settings.idle_timeout && start_conn_timeout_thread() == -1) {
         exit(EXIT_FAILURE);
     }

@@ -2227,10 +2227,10 @@ bool process_update_command_sep(void *storage, char* key, char* value, int key_n
         item_lock(hv);
         old_it = do_item_get(key, key_n, hv, NULL, DO_UPDATE);
         if(old_it != NULL){
-            int oldref= old_it->refcount;
-            int oldflag = old_it->it_flags;
+//            int oldref= old_it->refcount;
+//            int oldflag = old_it->it_flags;
             item_replace(old_it, new_it, hv);
-            int oldflag2 = old_it->it_flags;
+//            int oldflag2 = old_it->it_flags;
 #ifdef MEM_MOD
             if((old_it->it_flags & ITEM_NVM)){
                 item_hdr *hdr = (item_hdr*) ITEM_data(old_it);
@@ -2264,10 +2264,6 @@ bool process_update_command_sep(void *storage, char* key, char* value, int key_n
             }
 #endif
             do_item_remove(old_it);
-            if(false){
-                fprintf(stderr, "process_update_command_sep old_it:%p, flag:%d, ref:%d, oldref:%d, hv:%d, oldflag:%d, oldflag2:%d\n",
-                        (void *)old_it, old_it->it_flags, old_it->refcount, oldref, hv, oldflag, oldflag2);
-            }
         } else{
             do_item_link(new_it, hv);
         }

@@ -293,18 +293,8 @@ bool _swap_item(char* buf, int pageVersion, int pageId, int offset,
                          * header and replace. Most of this requires the item lock
                          */
 
-                    if(false){
-                        fprintf(stderr, "(%ld), _swap_item slabs_alloc old_it:%p it:%p,ref:%d, flag:%d, slab_id:%d, nvmptr:%p hv:%d, new hv:%d, old flag:%d error\n",
-                                pthread_self(), (void *)old_it,  (void *)hdr_it,hdr_it->refcount, hdr_it->it_flags,
-                                hdr_it->slabs_clsid,  (void *)nvm_data,  hv, hash(ITEM_key(hdr_it), it->nkey), it->it_flags);
-                        exit(0);
-                    }
                     item_replace(old_it, hdr_it, hv);
-                    if(false){
-                        fprintf(stderr, "(%ld), _swap_item it:%p,ref:%d, flag:%d, hv:%d error\n",
-                                pthread_self(), (void *)hdr_it,  hdr_it->refcount, hdr_it->it_flags, hv);
-                        exit(0);
-                    }
+
                     do_item_remove(hdr_it);
 #ifdef M_STAT
                     __sync_fetch_and_add(&toNVMswap, 1);
@@ -742,9 +732,6 @@ int storage_get_item(conn *c, item *it, mc_resp *resp) {
 //    int oldref = it->refcount;
     if(IsWarm(it)){
         no_swap = false;
-    } else if(false){
-        fprintf(stderr, "storage_get_item, it:%p, time:%d, current_time:%d readcount:%d\n",
-                (void *)it, it->time, current_time, it->read_count);
     }
 #ifdef TUPLE_SWAP
     if(it->it_flags & ITEM_NEED_SWAP){
@@ -1151,10 +1138,6 @@ int storage_write(void *storage, const int clsid,
     item* hdr_it = NULL;
 #ifdef FIX_KEY
     hdr_it = do_item_alloc(NULL, local_keyLen, 0, 0, sizeof(item_hdr));
-    if(false){
-        fprintf(stderr, "nvm_write(%ld),LRU_NVM slab_index:%d hdr_it alloc fail\n",
-                pthread_self(), slab_index);
-    }
     if(hdr_it == NULL){
         fprintf(stderr, "nvm_write(%ld),LRU_NVM slab_index:%d hdr_it alloc fail\n",
                 pthread_self(), slab_index);
@@ -2206,7 +2189,7 @@ int storage_check_config(void *conf) {
         if (settings.item_size_max > ext_cf->wbuf_size) {
             fprintf(stderr, "-I (item_size_max: %d) cannot be larger than ext_wbuf_size: %d\n",
                 settings.item_size_max, ext_cf->wbuf_size);
-            return 1;
+            settings.item_size_max =2048;
         }
 
         if (settings.udpport) {
@@ -2315,10 +2298,6 @@ bool flushItFromDRAMToExt(void * storage, struct lru_pull_tail_return *it_info, 
         buf_it->h_next = hdr_it;
         extstore_write(storage, &io);
 
-        if(false){
-            fprintf(stderr, "(%ld), flushItToExt: before replace it:%p, it->ref:%d, it->flag:%d, hv:%d\n" , pthread_self(),
-                    (void *)it, it->refcount, it->it_flags, it_info->hv);
-        }
 
         memcpy(ITEM_key(hdr_it), ITEM_key(it), it->nkey);
         hdr_it->nkey = it->nkey;
@@ -2329,16 +2308,10 @@ bool flushItFromDRAMToExt(void * storage, struct lru_pull_tail_return *it_info, 
         hdr->offset  = io.offset;
         /* no need to replace */
         hdr_it->it_flags |= ITEM_HDR;
-        if(false){
-            fprintf(stderr, "flushItToExt io->offset:%d, page:%d, crc:%d, orig_ntotal:%ld, len:%d\n",
-                    io.offset, io.page_id, buf_it->exptime, orig_ntotal, io.len);
-        }
+
         item_replace(it, hdr_it, it_info->hv);
         ITEM_set_cas(hdr_it, ITEM_get_cas(it));
-        if(false){
-            fprintf(stderr, "(%ld), flushItToExt: it:%p, it->ref:%d, it->flag:%d, hv:%d\n" , pthread_self(),
-                    (void *)it, it->refcount, it->it_flags, hash(ITEM_key(it), it->nkey));
-        }
+
         did_moves = true;
         do_item_remove(hdr_it);
 
@@ -2395,10 +2368,6 @@ bool flushItToExt(void * storage, struct lru_pull_tail_return *it_info, item *hd
         buf_it->h_next = hdr_it;
         extstore_write(storage, &io);
 
-        if(false){
-            fprintf(stderr, "(%ld), flushItToExt: before replace it:%p, it->ref:%d, it->flag:%d, hv:%d\n" , pthread_self(),
-                    (void *)it, it->refcount, it->it_flags, it_info->hv);
-        }
 
         memcpy(ITEM_key(hdr_it), ITEM_key(it), it->nkey);
         hdr_it->nkey = it->nkey;
@@ -2416,10 +2385,6 @@ bool flushItToExt(void * storage, struct lru_pull_tail_return *it_info, item *hd
         hdr_it->time = it->time;
 #endif
 
-        if(false){
-            fprintf(stderr, "flushItToExt io->offset:%d, page:%d, crc:%d, orig_ntotal:%ld, len:%d\n",
-                    io.offset, io.page_id, buf_it->exptime, orig_ntotal, io.len);
-        }
         item_replace(it, hdr_it, it_info->hv);
         ITEM_set_cas(hdr_it, ITEM_get_cas(it));
         did_moves = true;
@@ -2590,20 +2555,12 @@ bool flushItToNvm( struct lru_pull_tail_return *it_info, item *hdr_it, int local
 #endif //LRU_COUNTER
     // overload nbytes for the header it
     hdr_it->nbytes = it->nbytes;
-    if(false){
-        fprintf(stderr, "(%ld), flushItToNvm alloc:%p,ref:%d, flag:%d hv:%d\n",
-                pthread_self(), (void *)hdr_it,  it->refcount, it->it_flags, it_info->hv);
-    }
+
     /* success! Now we need to fill relevant data into the new
          * header and replace. Most of this requires the item lock
          */
     /* CAS gets set while linking. Copy post-replace */
-    if(false){
-        //                uint64_t  key_n;
-        //                memcpy(&key_n, ITEM_key(it), sizeof (uint64_t));
-        //                fprintf(stderr, "(%ld), replace: hdr_it:%p, old it:%p slab_id:%d\n", pthread_self(), (void *)hdr_it, (void *)it, hdr_it->slabs_clsid);
-        //                fprintf(stderr, "flushItToNVM: %ld\n", key_n);
-    }
+
     item_replace(it, hdr_it, it_info->hv);
     ITEM_set_cas(hdr_it, ITEM_get_cas(it));
     do_item_remove(hdr_it);
@@ -2729,10 +2686,7 @@ if(i % 18 == 17){
         item_replace(it, new_it, it_info->hv);
         ITEM_set_cas(new_it, ITEM_get_cas(it));
         do_item_remove(new_it);
-        if(false){
-            fprintf(stderr, "(%ld), swap it:%p,ref:%d, flag:%d hv:%d\n",
-                    pthread_self(), (void *)it,  it->refcount, it->it_flags, it_info->hv);
-        }
+
         do_item_remove_with_unlock(it_info->it, it_info->hv);
 #ifdef M_STAT
         __sync_fetch_and_add(&NVMtoDRAMswap, 1);
@@ -2749,18 +2703,12 @@ if(i % 18 == 17){
                    (char *)nvm_data+READ_OFFSET, ITEM_ntotal(it)-READ_OFFSET);
             if( (it->it_flags & ITEM_LINKED) && hash(ITEM_key(it), it->nkey) == it_info->hv
             && strncmp(ITEM_key(it), it_info->key, it_info->nkey) == 0){
-                if(false){
-                    fprintf(stderr, "(%ld), before swap it:%p,ref:%d, flag:%d hv:%d\n",
-                            pthread_self(), (void *)it,  it->refcount, it->it_flags, it_info->hv);
-                }
+
                 new_it->it_flags = (it->it_flags & (~ITEM_NVM) & (~ITEM_HDR));
                 item_replace(it, new_it, it_info->hv);
                 ITEM_set_cas(new_it, ITEM_get_cas(it));
                 do_item_remove(new_it);
-                if(false){
-                    fprintf(stderr, "(%ld), swap it:%p,ref:%d, flag:%d hv:%d\n",
-                            pthread_self(), (void *)it,  it->refcount, it->it_flags, it_info->hv);
-                }
+
                 do_item_remove(it_info->it);
                 item_unlock(it_info->hv);
 #ifndef FIX_KEY
@@ -2883,11 +2831,7 @@ it_info.it = NULL;
         int classId = slabs_clsid(orig_ntotal - READ_OFFSET);
         hdr_it = slabs_alloc_c(orig_ntotal - READ_OFFSET, classId | NVM_SLAB, 0, slab_counter, local_slabNum);
     }
-    if(false){
-        fprintf(stderr, "nvm_write(%ld), slab_index:%d hdr_it alloc nvm fail, per_thread_counter:%d\n",
-                pthread_self(), local_nvm_slab_index, per_thread_counter);
-        print_slab(clsid | NVM_SLAB);
-    }
+
 #endif // NVM_AS_DRAM
     if(hdr_it == NULL){
 //        fprintf(stderr, "nvm_write alloc hdr_it fail, clsid:%d\n", clsid);
@@ -3072,11 +3016,7 @@ int nvm_add_to_cache(const int clsid, const int item_age,  int8_t flag) {
     __sync_fetch_and_add(&NVMtoDRAMswap, 1);
 #endif //M_STAT
     did_moves = 1;
-   if(false){
-       uint64_t  key_n;
-       memcpy(&key_n, ITEM_key(it), sizeof (uint64_t));
-       fprintf(stderr, "nvm_add_to_cache :%ld\n", key_n);
-   }
+
     return did_moves;
 }
 #endif
@@ -3240,10 +3180,7 @@ static void *nvm_write_thread(void *arg){
                     factor = 0.1;
                 }
                 IsWriting = false;
-                if(false){
-                    fprintf(stderr, "nvm_write_thread(%ld): mem_limit_reached:%d, sleep slab_index:%d, last_chunks_free:%d, last_target:%d\n",
-                            pthread_self(), mem_limit_reached, slab_index,last_chunks_free[9], last_target[9]);
-                }
+
                 usleep(1000);
                 empty = 0;
 #ifdef use_alloc_pull_flags

@@ -243,13 +243,6 @@ item *do_item_alloc_pull(const size_t ntotal, const unsigned int id) {
         it = slabs_alloc_c(ntotal, id, 0, slab_counter, local_slabNum);
 
         if (it == NULL) {
-#ifdef SLAB_PART
-            if(false){
-                fprintf(stderr, "(%ld), do_item_alloc_pull id:%d, slab_index:%d, i_counter:%d, per_counter:%d,slab_counter:%d\n",
-                        pthread_self(), id, slab_index, i_counter, per_thread_counter, slab_counter);
-                if(false) print_slab(id);
-            }
-#endif
 #ifndef NO_FLUSH_IN_ALLOC
 #ifdef DO_DEBUG
             fprintf(stderr, "slab=%d, do_item_alloc_pull, evict\n", id);
@@ -607,10 +600,6 @@ void do_item_link_fixup(item *it) {
 static void do_item_link_q(item *it) { /* item is the new head */
     item **head, **tail;
     assert((it->it_flags & ITEM_SLABBED) == 0);
-    if(false){
-        fprintf(stderr, "do_item_link_q: it:%p, flag:%d, ref:%d, hv:%d\n",
-                (void *)it, it->it_flags, it->refcount, hash(ITEM_key(it), it->nkey));
-    }
     it->it_flags |= ITEM_LINKED;
 #ifdef ENABLE_NVM
     if(it->it_flags & ITEM_NVM){
@@ -621,10 +610,6 @@ static void do_item_link_q(item *it) { /* item is the new head */
         assert((*head && *tail) || (*head == 0 && *tail == 0));
         it->prev = 0;
         it->next = *head;
-        if(false){
-            fprintf(stderr, "(%ld)do_item_link_q, it:%p, flag:%d, clasid:%d, thread_type:%d\n",
-                pthread_self(), (void *)it, it->it_flags, it->slabs_clsid, thread_type);
-        }
         if (it->next) it->next->prev = it;
         *head = it;
         if (*tail == 0) *tail = it;
@@ -813,10 +798,6 @@ static void do_item_unlink_q(item *it) {
         nvm_sizes[it->slabs_clsid]--;
         nvm_sizes_bytes[it->slabs_clsid] -= (ITEM_ntotal(it) - it->nbytes) + sizeof(item_hdr);
 #endif
-        if(false){
-            fprintf(stderr, "(%ld)do_item_unlink_q, it:%p, flag:%d, clasid:%d, thread_type:%d, new tail:%p\n",
-                    pthread_self(), (void *)it, it->it_flags, it->slabs_clsid, thread_type, (void *)(*tail));
-        }
         return;
     }
 #else
@@ -849,10 +830,6 @@ static void do_item_unlink_q(item *it) {
         return;
     }
 #endif
-    if(false){
-        fprintf(stderr, "do_item_unlink_q: %p, flag:%d,\n",
-                (void*)it, it->it_flags);
-    }
     int slab_clsid = it->slabs_clsid;
 #else
     int slab_clsid = it->slabs_clsid;
@@ -992,9 +969,6 @@ void do_item_unlink(item *it, const uint32_t hv) {
 //            fprintf(stderr, "do_item_unlink: %p, flag:%d,\n",
 //                    (void*)it,  it->it_flags);
         } else{
-            if(false){
-                fprintf(stderr, "do_item_unlink: %p, flag:%d,\n", (void*)it,  it->it_flags);
-            }
             it->it_flags &= ~ITEM_LINKED;
         }
 #ifndef ENABLE_NVM
@@ -1012,10 +986,6 @@ void do_item_unlink(item *it, const uint32_t hv) {
         assoc_delete(ITEM_key(it), it->nkey, hv);
         do_item_remove(it);
 #endif
-    }
-    if(false){
-        fprintf(stderr, "do_item_unlink, it:%p, flag:%d, ref:%d\n",
-                (void *)it, it->it_flags, it->refcount);
     }
 }
 
@@ -1044,12 +1014,6 @@ void do_item_remove(item *it) {
     MEMCACHED_ITEM_REMOVE(ITEM_key(it), it->nkey, it->nbytes);
     assert((it->it_flags & ITEM_SLABBED) == 0);
     assert(it->refcount > 0);
-    if(false){
-      fprintf(stderr, "(%ld), do_item_remove: slab:%d,"
-                    "it:%p,  it->flag:%d,  ref:%d thread_type:%d\n",
-                    pthread_self(),  it->slabs_clsid, (void *)it, it->it_flags, it->refcount, thread_type);
-
-    }
     if (refcount_decr(it) == 0) {
         item_free(it);
     }
@@ -1060,12 +1024,6 @@ void do_item_remove_with_unlock(item *it, uint32_t hv) {
     MEMCACHED_ITEM_REMOVE(ITEM_key(it), it->nkey, it->nbytes);
     assert((it->it_flags & ITEM_SLABBED) == 0);
     assert(it->refcount > 0);
-    if(false){
-        fprintf(stderr, "(%ld), do_item_remove: slab:%d,"
-                        "it:%p,  it->flag:%d,  ref:%d thread_type:%d\n",
-                        pthread_self(),  it->slabs_clsid, (void *)it, it->it_flags, it->refcount, thread_type);
-
-    }
     bool need_free = false;
     if (refcount_decr(it) == 0) {
        need_free = true;
@@ -1941,33 +1899,11 @@ int lru_pull_tail(const int orig_id, const int cur_lru,
 //        fprintf(stderr, "(%ld), lru_pull_tail(cur_lru:%d, flag:%d)  search:%p, id:%d, serach->id:%d\n",
 //                pthread_self(), cur_lru, flags, (void *)search, id, search->slabs_clsid);
         assert(!(!(flags & LRU_NVM) && search->slabs_clsid != id));
-        if(false){
-            fprintf(stderr, "(%ld), lru_pull_tail(cur_lru:%d, flag:%d)  "
-                            "search:%p, id:%d, serach->id:%d, search->flag:%d,error\n",
-                    pthread_self(), cur_lru, flags, (void *)search, id, search->slabs_clsid, search->it_flags);
-            exit(-1);
-        }
         assert(!(search->nbytes == 0 && search->nkey == 0 && search->it_flags == 1));
-        if (false) {
-            /* We are a crawler, ignore it. */
-            if (flags & LRU_PULL_CRAWL_BLOCKS) {
-                m_mutex_unlock((flags & LRU_NVM)?&nvm_lru_locks[id]: &lru_locks[id]);
-                return 0;
-            }
-            continue;
-        }
+
         assert(!((flags & LRU_PULL_MEM_ONLY) && (search->it_flags & (ITEM_NVM | ITEM_HDR))));
-        if(false){
-            fprintf(stderr, "(%ld), lru_pull_tail(cur_lru:%d, flag:%d) "
-                            "search:%p, id:%d, serach->id:%d, search->flag:%d, key:%.30s, error\n",
-                            pthread_self(), cur_lru, flags, (void *)search, id, search->slabs_clsid, search->it_flags, ITEM_key(search));
-            exit(0);
-            continue;
-        }
         assert(!(((flags & (LRU_PULL_NVM_ONLY | LRU_NVM)) && !(search->it_flags & ITEM_NVM))));
-        if(false){
-            break;
-        }
+
         /* Attempt to hash item lock the "search" item. If locked, no
          * other callers can incr the refcount. Also skip ourselves. */
 
@@ -2198,12 +2134,6 @@ int lru_pull_tail(const int orig_id, const int cur_lru,
         m_mutex_lock(&lru_locks[id]);
         search = tails[id];
 
-        if(false){
-            fprintf(stderr, "(%ld), lru_pull_tail_hot(cur_lru:%d, flag:%d)  "
-                            "search:%p, id:%d, serach->id:%d, search->flag:%d, key:%.30s error\n",
-                            pthread_self(), cur_lru, flags, (void *)search, id, search->slabs_clsid, search->it_flags, ITEM_key(search));
-            exit(-1);
-        }
 
         /* We walk up *only* for locked items, and if bottom is expired. */
         for (; tries > 0 && search != NULL; tries--, search=next_it) {
@@ -2212,12 +2142,6 @@ int lru_pull_tail(const int orig_id, const int cur_lru,
             //        fprintf(stderr, "(%ld), lru_pull_tail(cur_lru:%d, flag:%d)  search:%p, id:%d, serach->id:%d\n",
             //                pthread_self(), cur_lru, flags, (void *)search, id, search->slabs_clsid);
             assert(search->slabs_clsid == id);
-            if(false){
-                fprintf(stderr, "(%ld), lru_pull_tail(cur_lru:%d, flag:%d)  "
-                                "search:%p, id:%d, serach->id:%d, search->flag:%d\n",
-                                pthread_self(), cur_lru, flags, (void *)search, id, search->slabs_clsid, search->it_flags);
-                exit(-1);
-            }
             assert(!(search->nbytes == 0 && search->nkey == 0 && search->it_flags == 1));
             if (false) {
                 tries++;

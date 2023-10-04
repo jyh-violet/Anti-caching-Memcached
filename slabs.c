@@ -559,10 +559,6 @@ static int nvm_do_slabs_newslab_c(const unsigned int id, int slab_counter) {
     // all memory of NVM hash been initialized to 0, no need to initialize here.
     //    memset(ptr, 0, (size_t)len);
     split_slab_page_into_freelist_c(ptr, id | NVM_SLAB, slab_counter);
-    if(false){
-//        fprintf(stderr, "(%ld) nvm_do_slabs_newslab after id:%d, slabIndex:%d, curr:%d, ptr:%p\n",
-//                pthread_self(), id, slabIndex, p->slabs_meta[slabIndex].sl_curr, (void *)ptr);
-    }
 #ifdef DO_DEBUG
     fprintf(stderr, "nvm_do_slabs_newslab p->slabs:%d, g->slabs:%d, p->sl_curr:%d\n",
             p->slabs, g->slabs, p->sl_curr);
@@ -679,11 +675,6 @@ static int do_slabs_newslab(const unsigned int id) {
     if ( (p->size >= MIN_VALUE_SIZE ?
     (((p->slabs) >= ((mem_limit)/ ((uint64_t)settings.slab_page_size)) )|| (p->slabs > 0 && g->slabs == 0)) : false)
     ) {
-        if(false){
-            fprintf(stderr, "do_slabs_newslab id:%d, mem_malloced:%ld, mem_limit:%ld, p->slabs:%d, g->slabs:%d, p->size:%d\n",
-                    id, mem_malloced, mem_limit, p->slabs, g->slabs, p->size);
-//            exit(0);
-        }
 #else
     if (mem_limit && (mem_malloced + len > (mem_limit)) && p->slabs > 0
         && g->slabs == 0) {
@@ -740,7 +731,7 @@ extern size_t NVM_size;
 
         static int do_slabs_newslab_c(const unsigned int id, int slab_counter) {
             slabclass_t *p = &slabclass[id];
-            slabclass_t *g = &slabclass[SLAB_GLOBAL_PAGE_POOL];
+//            slabclass_t *g = &slabclass[SLAB_GLOBAL_PAGE_POOL];
 
             int len = (settings.slab_reassign || settings.slab_chunk_size_max != settings.slab_page_size)
                     ? settings.slab_page_size
@@ -769,11 +760,6 @@ extern size_t NVM_size;
 #if !defined(NO_EXT) || (defined(NVM_AS_DRAM) && defined(NO_SSD))
             if ( (p->size >= MIN_VALUE_SIZE ?
                 ((p->slabs) >= ((mem_limit + NVM_len)/ ((uint64_t)settings.slab_page_size))) : false)) {
-                if(false){
-                    fprintf(stderr, "do_slabs_newslab id:%d, mem_malloced:%ld, mem_limit:%ld, p->slabs:%d, g->slabs:%d\n",
-                            id, mem_malloced, mem_limit, p->slabs, g->slabs);
-                    //            exit(0);
-                }
 #else
                 if (mem_limit && (mem_malloced + len > (mem_limit)) && p->slabs > 0
                 && g->slabs == 0) {
@@ -856,20 +842,10 @@ static void *do_slabs_alloc(const size_t size, unsigned int id,
          * mover's freeness detection. */
 
         assert((it->it_flags & ITEM_SLABBED) != 0);
-        if(false){
-            fprintf(stderr, "(%ld), do_slabs_alloc: slab:%d,  ptr:%p, slabIndex:%d, it->flag:%d ref:%d error\n",
-                    pthread_self(),  id, (void *)it, slabIndex, it->it_flags, it->refcount);
-        }
 
         it->it_flags &= ~ITEM_SLABBED;
         it->refcount = 1;
         p->slabs_meta[slabIndex].sl_curr--;
-        if(false){
-            fprintf(stderr, "(%ld), do_slabs_alloc: slab:%d, slabIndex:%d, sl_curr:%d, slot:%p, it:%p, it->flag:%d\n",
-                    pthread_self(), id, slabIndex,  p->slabs_meta[slabIndex].sl_curr,
-                    (void *)p->slabs_meta[slabIndex].slots, (void *)it, it->it_flags);
-
-        }
         assert(!(p->slabs_meta[slabIndex].sl_curr > 0 && p->slabs_meta[slabIndex].slots == NULL));
         if(p->slabs_meta[slabIndex].sl_curr > 0 && p->slabs_meta[slabIndex].slots == NULL){
             fprintf(stderr, "(%ld), do_slabs_alloc: slab:%d, slab_index:%d, sl_curr:%d, slot:%p, it:%p error\n",
@@ -1049,10 +1025,6 @@ static void *do_slabs_alloc_c(const size_t size, unsigned int id,
         it = (item *)p->slots;
         p->slots = it->next;
         if (it->next) it->next->prev = 0;
-        if(false){
-            fprintf(stderr, "(%ld), do_slabs_alloc: slab:%d, p->sl_curr:%d, p->slot:%p, it:%p\n",
-                    pthread_self(), id, p->sl_curr, (void *)p->slots, (void *)it);
-        }
 
 
 
@@ -1257,11 +1229,6 @@ if(id & NVM_SLAB){
         if (it->next) it->next->prev = it;
         p->slots = it;
         p->sl_curr++;
-
-        if(false){
-            fprintf(stderr, "(%ld), do_slabs_free_for_split: slab:%d, curr:%d,  ptr:%p, slab_index:%d, it->next:%p\n",
-                    pthread_self(),  id, p->sl_curr,  ptr, slabIndex, (void *)it->next);
-        }
     } else{
         assert(id >= POWER_SMALLEST && id <= power_largest);
         if (((id&(~NVM_SLAB)) < POWER_SMALLEST) ||((id&(~NVM_SLAB)) > power_largest))
@@ -1287,11 +1254,6 @@ if(id & NVM_SLAB){
         if (it->next) it->next->prev = it;
         p->slots = it;
         p->sl_curr++;
-
-        if(false){
-            fprintf(stderr, "(%ld), do_slabs_free_for_split: slab:%d, curr:%d,  ptr:%p, slab_index:%d, it->next:%p\n",
-                    pthread_self(),  id, p->sl_curr,  ptr, slabIndex, (void *)it->next);
-        }
     }
 #endif
 return;
@@ -1306,37 +1268,6 @@ static void do_slabs_free_c(void *ptr, const size_t size, unsigned int id, int s
     MEMCACHED_SLABS_FREE(size, id, ptr);
     p = (id & NVM_SLAB) ? &nvm_slabclass[id & (~NVM_SLAB)] : &slabclass[id];
     it = (item *)ptr;
-    if(false){
-        void *buffer[16];
-        int stack_num = backtrace(buffer, 8);
-        char **strings = backtrace_symbols(buffer, stack_num);
-        bool found = false;
-        int type = 0;
-        for (int j = 0; j < stack_num && !found; j++)
-            found |= (strstr(strings[j], "do_store_item") != NULL);
-        if(found){
-            type = 1;
-        }
-        for (int j = 0; j < stack_num && !found; j++)
-            found |= (strstr(strings[j], "flushItToExt") != NULL);
-        if(type == 0 && found){
-            type = 2;
-        }
-        for (int j = 0; j < stack_num && !found; j++)
-            found |= (strstr(strings[j], "swap_nvm_to_dram") != NULL);
-        if(type == 0 && found){
-            type = 3;
-        } else if (it->refcount > 0){
-            type = 4;
-        }
-        fprintf(stderr, "(%ld), do_slabs_free: slab:%d, curr:%d,  ptr:%p, slabIndex:%d, it->next:%p, type:%d\n",
-                pthread_self(),  id, p->slabs_meta[slabIndex].sl_curr,  ptr, slabIndex, (void *)it->next, type);
-        //            if(type == 0){
-        //                for (int j = 0; j < stack_num; j++)
-        //                    fprintf(stderr, "(%ld) [%02d] %s\n", pthread_self(),  j, strings[j]);
-        //            }
-        free(strings);
-    }
     assert(!((it->it_flags & ITEM_SLABBED) || (it->it_flags & ITEM_LINKED)));
     if(((it->it_flags & ITEM_SLABBED) || (it->it_flags & ITEM_LINKED))){
         fprintf(stderr, "(%ld), do_slabs_free_c: slab:%d, curr:%d,  "
@@ -1356,10 +1287,6 @@ static void do_slabs_free_c(void *ptr, const size_t size, unsigned int id, int s
     p->slabs_meta[slabIndex].sl_curr++;
 
     assert(!(p->slabs_meta[slabIndex].sl_curr > 1 && it->next == NULL));
-    if(false){
-        fprintf(stderr, "(%ld), do_slabs_free_c: slab:%d, curr:%d,  ptr:%p, slab_index:%d\n",
-                pthread_self(),  id, p->slabs_meta[slabIndex].sl_curr,  ptr, slabIndex);
-    }
     if(p->slabs_meta[slabIndex].sl_curr > 1 && it->next == NULL){
         fprintf(stderr, "(%ld), do_slabs_free_c: slab:%d, curr:%d,  ptr:%p, slab_index:%d, it->next:%p error\n",
                 pthread_self(),  id, p->slabs_meta[slabIndex].sl_curr,  ptr, slabIndex, (void *)it->next);
@@ -1387,12 +1314,6 @@ static void do_slabs_free_c(void *ptr, const size_t size, unsigned int id, int s
     if (it->next) it->next->prev = it;
     p->slots = it;
     p->sl_curr++;
-    if(false){
-        fprintf(stderr, "(%ld), do_slabs_free_c: slab:%d, ptr:%p, it->next:%p\n", pthread_self(),  id, ptr, (void *)it->next);
-    }
-    if(false){
-        fprintf(stderr, "do_slabs_free_c: it->next = NULL, it:%p\n", (void *)it);
-    }
 #endif
     return;
 }
@@ -1596,12 +1517,6 @@ void *slabs_alloc_c(size_t size, unsigned int id,
 
     ret = do_slabs_alloc_c(size, id, flags, slab_counter);
     m_mutex_unlock(lock_p);
-    if(false){
-        fprintf(stderr, "(%ld), do_slabs_alloc_c: slab:%d,  ptr:%p, slab_counter:%d,"
-                        " nvmptr:%p, hdr:%p, flag:%d, nkey:%d, data:%p\n",
-                pthread_self(),  id,  ret, slab_counter, (void *)((item_hdr*)ITEM_data((item*)ret))->nvmptr,
-                (void *)ITEM_data((item*)ret),((item*)ret)->it_flags, ((item*)ret)->nkey,(void *)((item*)ret)->data);
-    }
     return ret;
 }
 
@@ -1685,16 +1600,6 @@ bool if_nvm_limit_reached(void){
         }
     }
 
-    if(false){
-        int curr = 0;
-        for (int i = 0; i < MAX_THREAD; ++i) {
-            curr +=  nvm_slabclass[12].slabs_meta[i].sl_curr;
-        }
-        fprintf(stderr, "if_nvm_limit_reached: g->slabs:%d size:%d perslab:%d slabReached:%d, slabs:%d, sl_curr:%d\n",
-                g->slabs, g->size, g->perslab, slabReached,
-                nvm_slabclass[12].slabs, curr);
-
-    }
 #else
     bool reached = (g->slabs) <= ((nvm_limit / (size_t)(g->size * g->perslab)) * settings.slab_automove_freeratio);
     bool slabReached = false;
@@ -1775,10 +1680,6 @@ unsigned int slabs_available_chunks(const unsigned int id, bool *mem_flag,
             *mem_flag &= (curr <= (p->slabs * p->perslab *settings.slab_automove_freeratio ));
             count ++ ;
              */
-            if(false){
-                fprintf(stderr, "mem_flag:%d, g->slabs:%d, curr:%d,mem_malloced:%ld, mem_limit:%ld, free_memchunks:%d\n",
-                        *mem_flag, slabclass[SLAB_GLOBAL_PAGE_POOL].slabs, curr, mem_malloced, mem_limit,  settings.ext_free_memchunks[id]);
-            }
 #else
             *mem_flag = mem_malloced >= mem_limit ? true : false;
 #endif
