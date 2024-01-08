@@ -80,4 +80,6 @@ void print_slab(int  slab_id);
 int get_slab_size(int  slab_id);
 void change_slab_alloc_free_flag(int slab_id, int slab_counter);
 void slabs_prefill_global_with_nvm(char* src, uint64_t size);
+void *lru_statistics_thread(void *arg);
+
 #endif

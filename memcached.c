@@ -293,7 +293,7 @@ static void settings_init(void) {
     settings.temp_lru = false;
     settings.temporary_ttl = 61;
     settings.idle_timeout = 0; /* disabled */
-    settings.hashpower_init = 0;
+    settings.hashpower_init = 28;
     settings.slab_reassign = true;
     settings.slab_automove = 1;
     settings.slab_automove_ratio = 0.8;
@@ -807,7 +807,6 @@ conn *conn_new(const int sfd, enum conn_states init_state,
     if (IS_UDP(transport)) {
         c->try_read_command = try_read_command_udp;
     } else {
-        fprintf(stderr, "c->protocol:%d\n", c->protocol);
         switch (c->protocol) {
             case ascii_prot:
                 if (settings.auth_file == NULL) {
@@ -850,7 +849,6 @@ conn *conn_new(const int sfd, enum conn_states init_state,
     STATS_UNLOCK();
 
     MEMCACHED_CONN_ALLOCATE(c->sfd);
-    fprintf(stderr, "conn_new:%p\n", (void *)c);
     return c;
 }
 
@@ -6481,8 +6479,6 @@ void loadData(IndexAttributes* attributes){
     thread.lru_bump_buf = item_lru_bump_buf_create();
     c->thread = &thread;
     conn_io_queue_setup(c);
-    fprintf(stderr,"thread:%d, after conn_free,   thread:%p, next:%p, state:%d, %d, %d c->sfd:%d\n",
-            attributes->threadId, (void *) c->thread, (void *)c->next, c->rsize, c->io_queues_submitted, c->recache_counter, c->sfd);
     struct timespec startTmp, endTmp;
     uint64_t tNum = __sync_fetch_and_add(&taskNum, 1);
     uint64_t* failed = malloc(perTask * sizeof(uint64_t));
@@ -6589,8 +6585,6 @@ void handleFailed(IndexAttributes* attributes){
         fprintf(logfile,"thread:%d, resp_start error\n", attributes->threadId);
         return;
     }
-    fprintf(stderr, "transaction(%ld), slab_index:%d, per_thread_counter:%d, io_ctx:%p\n",
-            pthread_self(), slab_index, per_thread_counter, c->resp->io_ctx);
     clock_gettime(CLOCK_REALTIME, &startTmp);
 #ifndef UPDATE_TO_NVM
     char* cmd = "set";
@@ -6777,12 +6771,6 @@ void transaction(IndexAttributes* attributes){
     thread.lru_bump_buf = item_lru_bump_buf_create();
     c->thread = &thread;
     conn_io_queue_setup(c);
-//
-//    fprintf(stderr, "transaction(%ld), thread:%d, slab_index:%d, ext_storage:%p, c->thread->storage:%p\n",
-//            pthread_self(),  attributes->threadId, slab_index, (void *)ext_storage, (void *) c->thread->storage);
-
-
-    //    printf("thread%d: (%d, %d)\n ", attributes->threadId,  attributes->startPos, attributes->endPos);
     struct timespec startTmp, endTmp;
     uint64_t tNum = __sync_fetch_and_add(&taskNum, 1);
 #ifndef UPDATE_TO_NVM
@@ -6793,8 +6781,6 @@ void transaction(IndexAttributes* attributes){
         fprintf(logfile,"thread:%d, resp_start error\n", attributes->threadId);
         return;
     }
-    fprintf(stderr, "transaction(%ld), slab_index:%d, per_thread_counter:%d, io_ctx:%p\n",
-            pthread_self(), slab_index, per_thread_counter, c->resp->io_ctx);
     clock_gettime(CLOCK_REALTIME, &startTmp);
 #ifndef UPDATE_TO_NVM
     char* cmd = "set";
@@ -6809,31 +6795,6 @@ void transaction(IndexAttributes* attributes){
         attributes->txnCount += perTask;
         int fail_con = 0;
         for (uint64_t i = 0; i < perTask; ++i) {
-/*
-            //        value_t value = keys[i] + attributes->addValue;
-//            if( i < perTask){
-//                opIndex =  i + tNum*perTask;
-//            } else{
-//                opIndex = failed[(i - perTask) % perTask];
-//                if((i > perTask) && (opIndex == failed[(i - perTask - 1) % perTask])){
-//                    if(i% 1000 == 0){
-//                        repeat ++;
-//                        if(repeat > 100){
-//                            fprintf(logfile,"thread:%d, transaction key:%ld error\n", attributes->threadId, txn_keys[opIndex]);
-//                            fflush(logfile);
-//                            fprintf(stderr,"thread:%d, transaction key:%ld error\n", attributes->threadId, txn_keys[opIndex]);
-//                            break;
-//                        }
-//                    }
-//                }
-//            }
-//            if(i == lastEnd){
-//                if((failedIndex + perTask - lastEnd > 10 ) || (i%100 == 0)){
-//                    fprintf(stderr, "tNum:%ld, failed:%ld\n", tNum, failedIndex + perTask - lastEnd);
-//                }
-//                lastEnd = failedIndex + perTask;
-//            }
-*/
             opIndex =  i + tNum*perTask;
 
 #ifdef TEST_LATENCY
@@ -6957,9 +6918,8 @@ void transaction(IndexAttributes* attributes){
         }
 #endif
         }
-        if(tNum % 100 == 0){
-            fprintf(stderr, "thread:%d, tNum:%ld, readFail:%ld, writeFail:%ld, ssdRead:%ld\n",
-                    attributes->threadId, tNum, attributes->readFail, attributes->writeFail, attributes->ssdRead);
+        if(tNum % 1000 == 0){
+            fprintf(stderr, "thread:%d, tNum:%ld\n", attributes->threadId, tNum);
         }
         tNum = __sync_fetch_and_add(&taskNum, 1);
     }
@@ -7114,65 +7074,16 @@ void test(void ){
     double percentile_val50 = percentile_calculate(50);
     double percentile_val75 = percentile_calculate(75);
     double percentile_val99 = percentile_calculate(99);
-    fprintf(logfile,"%d, %ld,  %ld, %d, %d, %d, %d, %d, "
-                   "%ld, %ld, %.2f, %d, %.3f, "
-                   "%ld, %ld, %.2f, %.2f, %.2f, %.2f, %s,"
-                   "%ld, %ld, %ld, %ld, %ld, %ld, %ld, %ld, %d, %d, %d\n",
-                   flag, LOAD_SIZE, RUN_SIZE, threadNum, value_len, settings.ext_io_threadcount, settings.hashpower_init, settings.ext_wbuf_size/1024,
-                   settings.nvm_limit / 1024 / 1024, settings.maxbytes / 1024 / 1024,
-                   settings.slab_automove_freeratio,HOT_ITEM_R_COUNT,CLOCK_INTERVAL/1000000.0,
-                   initFailed, txnFailed, txnTime,
+    fprintf(logfile,"%d, %ld,  %ld, %d, %d, %.2f, %.2f, %.2f, %.2f, %s\n",
+                   flag, LOAD_SIZE, RUN_SIZE, threadNum, value_len, txnTime,
                    percentile_val50, percentile_val75, percentile_val99,
-                   init_file,
-                   DRAMhit, NVMhit, wbufhit, miss, ssdRead, read, swapOp, writeFail, NVMtoDRAMswap, SSDread, asySSDread);
-    fprintf(stderr,"%d, %ld,  %ld, %d, %d, %d, %d, %d, "
-                    "%ld, %ld, %.2f, %d, %.3f, "
-                    "%ld, %ld, %.2f, %.2f, %.2f, %.2f, %s,"
-                    "%ld, %ld, %ld, %ld, %ld, %ld, %ld, %ld, %d, %d, %d\n",
-                    flag, LOAD_SIZE, RUN_SIZE, threadNum, value_len, settings.ext_io_threadcount, settings.hashpower_init, settings.ext_wbuf_size/1024,
-                    settings.nvm_limit / 1024 / 1024, settings.maxbytes / 1024 / 1024,
-                    settings.slab_automove_freeratio,HOT_ITEM_R_COUNT,CLOCK_INTERVAL/1000000.0,
-                    initFailed, txnFailed, txnTime,
-                    percentile_val50, percentile_val75, percentile_val99,
-                    init_file,
-                    DRAMhit, NVMhit, wbufhit, miss, ssdRead, read, swapOp, writeFail, NVMtoDRAMswap, SSDread, asySSDread);
+                   init_file);
 #else
-
-    fprintf(logfile,"%d, %ld,  %ld, %d, %d, %d, %d, %d, "
-                    "%ld, %ld, %.4f, %d, %.4f, "
-                    "%ld, %ld, %.4f, %.2fops, %.2fops, %s, "
-                    "%d, %d, %d, %d, %d, "
-                    "%ld, %ld, %ld, %ld, %ld, %ld, %ld, %ld, %d, %d\n",
-                    flag, LOAD_SIZE, RUN_SIZE, threadNum, value_len, settings.ext_io_threadcount, settings.hashpower_init, settings.ext_wbuf_size/1024,
-                    settings.nvm_limit / 1024 / 1024, settings.maxbytes / 1024 / 1024,
-                    settings.slab_automove_freeratio,HOT_ITEM_R_COUNT,CLOCK_INTERVAL/1000000.0,
-           initFailed, txnFailed, txnTime,
-           LOAD_SIZE * settings.ext_io_threadcount  / initT,
-           (txnCount - txnFailed) / txnTime,
-           init_file,
-           toDRAMswap, toNVMswap, cacheFault, flushToNVM, flushToSSD,
-           DRAMhit, NVMhit, wbufhit, miss, ssdRead, read, swapOp, writeFail, NVMtoDRAMswap, asySSDread);
-    fprintf(stderr,"flag, LOAD_SIZE, RUN_SIZE, threadNum, value_len, io_threads, hashPower, wbuf_size \\\\"
-                   "nvm_limit, dram_limit, freeRatio, HOT_ITEM_R_COUNT, CLOCK_INTERVAL, \\\\"
-                    "initFailed, txnFailed, txnTime, load_thp, txn_thp, file, \\\\"
-                    "toDRAMswap, toNVMswap, cacheFault, flushToNVM, flushToSSD, \\\\"
-                    "DRAMhit, NVMhit, wbufhit, miss, ssdRead, read, swapOp, writeFail, NVMtoDRAMswap, SSDread\n");
-
-    fprintf(stderr,"%d, %ld,  %ld, %d, %d, %d, %d, %d, \\\\"
-                   "%ld, %ld, %.4f, %d, %.4f, \\\\"
-                   "%ld, %ld, %.4f, %.2fops, %.2fops, %s, \\\\"
-                   "%d, %d, %d, %d, %d, \\\\"
-                   "%ld, %ld, %ld, %ld, %ld, %ld, %ld, %ld, %d, %d, %d\n",
-                    flag, LOAD_SIZE, RUN_SIZE, threadNum, value_len, settings.ext_io_threadcount, settings.hashpower_init, settings.ext_wbuf_size/1024,
-                    settings.nvm_limit / 1024 / 1024, settings.maxbytes / 1024 / 1024,
-                    settings.slab_automove_freeratio, HOT_ITEM_R_COUNT, CLOCK_INTERVAL / 1000000.0,
-                    initFailed, txnFailed, txnTime,
-                    LOAD_SIZE /settings.ext_io_threadcount * settings.ext_io_threadcount * settings.ext_io_threadcount  / initT ,
-                    (txnCount - txnFailed) / txnTime,
-                    init_file,
-                    toDRAMswap, toNVMswap, cacheFault, flushToNVM, flushToSSD,
-                    DRAMhit, NVMhit, wbufhit, miss, ssdRead, read, swapOp, writeFail, NVMtoDRAMswap, SSDread, asySSDread);
-
+    fprintf(logfile,"%d, %ld,  %ld, %d, %d, %d, %.2fops, %.2fops, %s\n",
+            flag, LOAD_SIZE, RUN_SIZE, threadNum, value_len, (int)txnTime,
+            LOAD_SIZE * settings.ext_io_threadcount  / initT,
+            (txnCount - txnFailed) / txnTime,
+            init_file);
 #endif
 }
 
@@ -7334,8 +7245,6 @@ void ycsb(void ) {
 
 
     memcpy(value + value_len, "\r\n", 2);
-
-    fprintf(stderr,"LOAD_SIZE:%ld, TXN_SIZE:%ld, slabNum:%d, %d,%d, %d\n", LOAD_SIZE, RUN_SIZE, slabNum, (int)value[1000],  (int)value[1001], strncmp(value + 1000, "\r\n", 2));
 
     test();
     fclose(logfile);

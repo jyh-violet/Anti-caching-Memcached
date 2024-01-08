@@ -16,7 +16,7 @@ void storage_stats(ADD_STAT add_stats, conn *c);
 void process_extstore_stats(ADD_STAT add_stats, conn *c);
 bool storage_validate_item(void *e, item *it);
 int storage_get_item(conn *c, item *it, mc_resp *resp);
-int nvm_aio_get_item(conn *c, char* src, int len);
+int nvm_aio_get_item(conn *c, item* src, int len);
 
 // callbacks for the IO queue subsystem.
 void storage_submit_cb(io_queue_t *q);

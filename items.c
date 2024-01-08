@@ -912,13 +912,7 @@ int item_try_unlink_q(item *it) {
             exit(0);
     }
     m_mutex_t *lock_p = &lru_locks[it->slabs_clsid];
-    int try = 0;
-    while(try < 2 && !m_mutex_try_lock(lock_p)){
-        try ++;
-    }
-    if(try == 2) {
-        return 0;
-    }
+    m_mutex_lock(lock_p);
     do_item_unlink_q(it);
     m_mutex_unlock(lock_p);
     return 1;
@@ -1591,9 +1585,26 @@ void do_item_bump(conn *c, item *it, const uint32_t hv) {
             if(it->read_count < (MaxCount)){
                 it->read_count ++;
             }
+#ifdef MEM_MOD
+            if (it->it_flags & ITEM_NVM) {
+                item_hdr * hdr = (item_hdr*)ITEM_data(it);
+                if(hdr->cache_item != NULL){
+                    hdr->cache_item->read_count = it->read_count;
+                }
+            }
+#endif
         } else{
             it->read_count = it->read_count/(current_time - it->time + 1) + 1;
             it->time = current_time;
+#ifdef MEM_MOD
+            if (it->it_flags & ITEM_NVM) {
+                item_hdr * hdr = (item_hdr*)ITEM_data(it);
+                if(hdr->cache_item != NULL){
+                    hdr->cache_item->read_count = it->read_count;
+                    hdr->cache_item->time = it->time;
+                }
+            }
+#endif
         }
 #ifndef ENABLE_NVM
         if (((it->it_flags & ITEM_ACTIVE) == 0)) {
@@ -1619,6 +1630,15 @@ void do_item_bump(conn *c, item *it, const uint32_t hv) {
         it->it_flags |= ITEM_FETCHED;
         do_item_update(it);
     }
+#ifdef MEM_MOD
+    if (it->it_flags & ITEM_NVM) {
+        item_hdr * hdr = (item_hdr*)ITEM_data(it);
+        if(hdr->cache_item != NULL){
+            hdr->cache_item->read_count = it->read_count;
+            hdr->cache_item->time = it->time;
+        }
+    }
+#endif
 }
 
 item *do_item_touch(const char *key, size_t nkey, uint32_t exptime,
@@ -1983,6 +2003,12 @@ int lru_pull_tail(const int orig_id, const int cur_lru,
                             it = search;
                             removed++;
                         } else{
+                            if(IsWarm(search)){
+                                do_item_unlink_q(search);
+                                do_item_link_q(search);
+                                it = search;
+                                removed++;
+                            }
                             do_item_remove(search);
                             item_trylock_unlock(hold_lock);
                         }
@@ -2455,8 +2481,9 @@ static int lru_maintainer_juggle(const int slabs_clsid) {
         if (settings.lru_segmented) {
             do_more += lru_pull_tail(slabs_clsid, COLD_LRU, total_bytes, LRU_PULL_CRAWL_BLOCKS, 0, NULL);
         }
-        if (do_more == 0)
-            break;
+        if(do_more) {
+            did_moves++;
+        }
         did_moves++;
     }
     return did_moves;
@@ -2612,7 +2639,9 @@ slab_automove_reg_t slab_automove_extstore = {
 #endif
 static pthread_t lru_maintainer_tid;
 static pthread_t lru_nvm_maintainer_tid;
-
+#ifdef SAMPLE_HOT_COUNT
+static pthread_t lru_statistics_tid;
+#endif
 
 #define MAX_LRU_MAINTAINER_SLEEP 1000000
 #define MIN_LRU_MAINTAINER_SLEEP 1000
@@ -2817,6 +2846,15 @@ int start_lru_maintainer_thread(void *arg) {
         pthread_mutex_unlock(&lru_maintainer_lock);
         return -1;
     }
+#ifdef SAMPLE_HOT_COUNT
+    if ((ret = pthread_create(&lru_statistics_tid, NULL,
+                              lru_statistics_thread, arg)) != 0) {
+        fprintf(stderr, "Can't create LRU nvm maintainer thread: %s\n",
+                strerror(ret));
+        pthread_mutex_unlock(&lru_maintainer_lock);
+        return -1;
+    }
+#endif
     pthread_mutex_unlock(&lru_maintainer_lock);
 
     return 0;

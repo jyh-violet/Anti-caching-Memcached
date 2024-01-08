@@ -22,7 +22,13 @@
 #define PAGE_BUCKET_LOWTTL  3
 #define PAGE_BUCKET_BASE 4
 //#define use_nvm_alloc_pull_flags
-
+#define ASY_NVM_SWAP
+#if defined(SWAP_COUNT)
+#define NVM_SWAP_COUNT SWAP_COUNT
+#else
+#define SWAP_COUNT 32
+#define NVM_SWAP_COUNT 32
+#endif
 /*
  * API functions
  */
@@ -252,7 +258,6 @@ bool _swap_item(char* buf, int pageVersion, int pageId, int offset,
                     memcpy(ITEM_key(hdr_it),ITEM_key(it), it->nkey);
                     item_hdr *new_hdr = (item_hdr *) ITEM_data(hdr_it);
                     hdr_it->nbytes = it->nbytes;
-                    char* nvm_data = new_hdr->nvmptr;
 #ifdef MEM_MOD
                     item* nvm_item = (item*)new_hdr->nvmptr;
 
@@ -264,6 +269,7 @@ bool _swap_item(char* buf, int pageVersion, int pageId, int offset,
 
                     if(cache_it != NULL){
                         new_hdr->cache_item = cache_it;
+                        cache_it->h_next = hdr_it;
                         cache_it->nkey = old_it->nkey;
                         memcpy(ITEM_key(cache_it), ITEM_key(it), it->nkey);
                         memcpy(ITEM_data(cache_it), (char *)it+READ_OFFSET, orig_ntotal-READ_OFFSET);
@@ -273,7 +279,7 @@ bool _swap_item(char* buf, int pageVersion, int pageId, int offset,
                         memcpy(ITEM_data(nvm_item), (char *)it+READ_OFFSET, orig_ntotal-READ_OFFSET);
                     }
 #else
-
+                    char* nvm_data = new_hdr->nvmptr;
                     memcpy((char *)nvm_data,
                            (char *)it+READ_OFFSET, orig_ntotal-READ_OFFSET);
 #endif
@@ -300,8 +306,6 @@ bool _swap_item(char* buf, int pageVersion, int pageId, int offset,
                     __sync_fetch_and_add(&toNVMswap, 1);
 #endif
                 } else{
-                    fprintf(stderr, "(%ld), _swap_item slabs_alloc failed ref:%d, nvm_slab:%d, old flag:%d, local_nvm_slab_index:%d, local_nvm_adder:%d, local_slabNum:%d\n",
-                            pthread_self(),old_it->refcount,  classId, it->it_flags, local_nvm_slab_index, local_nvm_adder, local_slabNum);
                     swaped = false;
                 }
 #else
@@ -434,8 +438,6 @@ void* _swap_thread(void *arg) {
     } else{
         slab_index += left;
     }
-    fprintf(stderr, "_swap_thread(%ld), slab_index:%d, per_thread_counter:%d, keyLen:%d\n",
-            pthread_self(), slab_index, per_thread_counter, keyLen);
 
     int local_nvm_slab_index = me->threadId * (slabNum/ settings.swap_threadcount);
     int local_nvm_per_thread_counter = slabNum/ settings.swap_threadcount;
@@ -478,12 +480,10 @@ void* _swap_thread(void *arg) {
             end->next = NULL;
         }
         pthread_mutex_unlock(&me->mutex);
-#if defined(TUPLE_SWAP) || defined(NVM_AS_DRAM) || defined(BLOCK_SWAP) || defined(DRAM_CACHE) || defined(MEM_MOD)
-#else
+
         while (IsWriting > 0) {
             usleep(10000);
         }
-#endif
         item* it;
         swap_buf *swapBuf = swap_stack;
         size_t orig_ntotal;
@@ -734,12 +734,6 @@ int storage_get_item(conn *c, item *it, mc_resp *resp) {
         no_swap = false;
     }
 #ifdef TUPLE_SWAP
-    if(it->it_flags & ITEM_NEED_SWAP){
-        item_remove(it);
-        no_swap = true;
-        extstore_submit_opt(c->thread->storage, eio,
-                            no_swap);
-    }else{
         no_swap=false;
 
         if(extstore_submit_opt(c->thread->storage, eio,
@@ -748,7 +742,6 @@ int storage_get_item(conn *c, item *it, mc_resp *resp) {
         } else{
             item_remove(it);
         }
-    }
 #else
     if(no_swap){
         item_remove(it);
@@ -762,11 +755,37 @@ int storage_get_item(conn *c, item *it, mc_resp *resp) {
     return 0;
 }
 
-int nvm_aio_get_item(conn *c, char* src, int len) {
-    extstore_submit_nvm(c->thread->storage, src,len);
+
+#define NVM_SWAP_QUEUE_SIZE 1024
+typedef struct NVM_SWAP_QUEUE{
+    union {
+        struct {
+            item* hot_items[NVM_SWAP_QUEUE_SIZE];
+            int start;
+            int end;
+        };
+        char cache_line[64];
+    };
+}NVM_SWAP_QUEUE;
+
+NVM_SWAP_QUEUE  nvmSwapQueue[64];
+
+int nvm_aio_get_item(conn *c, item* it, int len) {
+#ifdef ASY_NVM_SWAP
+    if(IsHot(it)) {
+        NVM_SWAP_QUEUE* queue = &nvmSwapQueue[txn_threadId];
+        if (queue->end - queue->start < NVM_SWAP_QUEUE_SIZE) {
+            queue->hot_items[queue->end % NVM_SWAP_QUEUE_SIZE] = it;
+            queue->end ++;
+        }
+    }
+#endif
+#if  (!defined(MEM_MOD))  && defined(NVM_AIO)
+    //  extstore_submit_nvm(c->thread->storage,  it,len);
+  extstore_submit_nvm(c->thread->storage,  ((item_hdr *)ITEM_data(it))->nvmptr,len);
+#endif
     return 1;
 }
-
 #else
 
     int storage_get_item(conn *c, item *it, mc_resp *resp) {
@@ -1208,7 +1227,6 @@ static void *storage_write_thread(void *arg) {
         per_thread_counter = slabNum - slab_index;
     }
     thread_type = STORAGE_WRITE_THREAD;
-    fprintf(stderr, "storage_write_thread(%ld), slab_index:%d\n", pthread_self(), slab_index);
 
 #ifdef ENABLE_NVM
     int totalFree = 0;
@@ -1249,11 +1267,16 @@ static void *storage_write_thread(void *arg) {
 #else
                 int target = settings.ext_free_memchunks[x + MAX_NUMBER_OF_SLAB_CLASSES];
 #endif
-                unsigned int toNVM = 0;
                 unsigned int toSSD = 0;
 
+#ifdef USE_FREE_RATIO
                 if( nvm_limit_reached && (((target > (last_target[x])) || (chunks_free < target * settings.slab_automove_freeratio )
-                || (chunks_free < (last_chunks_free[x] * settings.slab_automove_freeratio))))){
+                                           || (chunks_free < (last_chunks_free[x] * settings.slab_automove_freeratio))))){
+
+#else
+                if( nvm_limit_reached && (((target > (last_target[x])) || (chunks_free < target * factor)
+                                           || (chunks_free < (last_chunks_free[x] * factor))))){
+#endif
                     __sync_fetch_and_add(&IsWriting, 1);
 
                     // storage_write() will fail and cut loop after filling write buffer.
@@ -1279,17 +1302,10 @@ static void *storage_write_thread(void *arg) {
 
                 }else {
                     nvm_limit_reached = false;
-//                    fprintf(stderr, "storage_write_thread(%ld): chunks_free:%d,last_chunks_free:%d, target:%d, last_target:%d\n",
-//                                    pthread_self(),chunks_free, last_chunks_free[x], target, last_target[x]);
                 }
 
                 if(toSSD){
                     counter ++;
-                    if((counter % 10 == 0)){
-                        fprintf(stderr, "storage_write_thread(%ld): slab:%d,chunks_free:%d,last_chunks_free:%d, last_target:%d, "
-                                        "toNVM:%d, toSSD:%d, totalFree:%d, target:%d\n",
-                                        pthread_self(), x, chunks_free, last_chunks_free[x], last_target[x], toNVM, toSSD, totalFree, target);
-                    }
                     totalToSSD += toSSD;
                 }
                 totalFree += toSSD;
@@ -1303,9 +1319,6 @@ static void *storage_write_thread(void *arg) {
                 if(factor < 0.1){
                     factor = 0.1;
                 }
-//                fprintf(stderr, "storage_write_thread(%ld): nvm_once_reached:%d sleep chunks_free:%d,last_chunks_free:%d, last_target:%d, "
-//                                "toSSD:%d, totalFree:%d\n",
-//                                pthread_self(), nvm_once_reached, chunks_free, last_chunks_free[12], last_target[12], totalToSSD, totalFree);
                 usleep(1000);
             } else {
                 factor = 1.0;
@@ -1927,13 +1940,17 @@ void *storage_init_config(struct settings *s) {
     s->ext_compact_under = 0;
     s->ext_drop_under = 0;
     s->ext_max_sleep = 1000000;
-    s->slab_automove_freeratio = 0.01;
+    s->slab_automove_freeratio = 0.2;
     s->ext_page_size = 1024 * 1024 * 32;
     s->ext_io_threadcount = 1;
     cf->ext_cf.page_size = settings.ext_page_size;
     cf->ext_cf.wbuf_size = settings.ext_wbuf_size;
     cf->ext_cf.io_threadcount = settings.ext_io_threadcount;
+#ifdef SWAP_COUNT
+    cf->ext_cf.swap_threadcount = SWAP_COUNT;
+#else
     cf->ext_cf.swap_threadcount = cf->ext_cf.io_threadcount;
+#endif
     settings.swap_threadcount = cf->ext_cf.swap_threadcount;
     cf->ext_cf.io_depth = 1;
 #ifdef ENABLE_NVM
@@ -2043,6 +2060,11 @@ int storage_read_config(void *conf, char **subopt) {
                 return 1;
             }
             settings.ext_io_threadcount = ext_cf->io_threadcount;
+#ifdef SWAP_COUNT
+            cf->ext_cf.swap_threadcount = SWAP_COUNT;
+#else
+            cf->ext_cf.swap_threadcount = cf->ext_cf.io_threadcount;
+#endif
             settings.swap_threadcount = ext_cf->swap_threadcount;
             break;
         case EXT_IO_DEPTH:
@@ -2396,6 +2418,7 @@ bool flushItToExt(void * storage, struct lru_pull_tail_return *it_info, item *hd
                 old_hdr->cache_item->it_flags &= ~ITEM_LINKED;
                 do_item_remove(old_hdr->cache_item);
             }
+            old_hdr->cache_item->h_next = NULL;
 
             old_hdr->cache_item = NULL;
         }
@@ -2765,7 +2788,7 @@ it_info.it = NULL;
             return 0;
         }
         item *it = it_info.it;
-        item* hdr_it = do_item_get(ITEM_key(it), it->nkey, it_info.hv,  NULL, DONT_UPDATE);
+        item* hdr_it = it->h_next;
         if(hdr_it == NULL){
             if(it->it_flags & ITEM_LINKED){
                 it->it_flags &= ~ITEM_LINKED;
@@ -2779,7 +2802,9 @@ it_info.it = NULL;
             return 1;
         }
 //        item* hdr_it = item_get(ITEM_key(it), it->nkey, NULL, DONT_UPDATE);
+        refcount_incr(hdr_it);
         item_hdr * hdr =  (item_hdr *)ITEM_data(hdr_it);
+//        item* hdr_it = item_get(ITEM_key(it), it->nkey, NULL, DONT_UPDATE);
         if(((hdr_it->it_flags & ITEM_NVM)) && hdr->cache_item == it){
 #ifdef MEM_MOD
             item* nvm_item = (item*)hdr->nvmptr;
@@ -2809,6 +2834,7 @@ it_info.it = NULL;
 //                    (void *)it, it->it_flags, it->refcount);
 //            exit(0);
         }
+        it->h_next = NULL;
         do_item_remove(hdr_it);
         do_item_remove(it);
         item_unlock(it_info.hv);
@@ -2942,7 +2968,14 @@ int nvm_swap(void *storage, const int clsid, const int item_age,  int8_t flag) {
 #endif
 #endif
         it_info.it = NULL;
+#ifdef DOUBLE_NVM
+        lru_pull_head(clsid | NVM_HOT_LRU, COLD_LRU, 0, LRU_PULL_RETURN_ITEM | LRU_NVM, 0, &it_info);
+        if(it_info.it == NULL){
+            lru_pull_head(clsid, COLD_LRU, 0, LRU_PULL_RETURN_ITEM | LRU_NVM, 0, &it_info);
+        }
+#else
         lru_pull_head(clsid, COLD_LRU, 0, LRU_PULL_RETURN_ITEM | LRU_NVM, 0, &it_info);
+#endif
         /* Item is locked, and we have a reference to it. */
         if(it_info.it != NULL){
             break;
@@ -3010,6 +3043,7 @@ int nvm_add_to_cache(const int clsid, const int item_age,  int8_t flag) {
     item_hdr *hdr = (item_hdr *)ITEM_data(it);
     item_link_q(new_it);
     hdr->cache_item = new_it;
+        new_it->h_next = it;
     do_item_remove(it);
     item_unlock(it_info.hv);
 #ifdef M_STAT
@@ -3072,13 +3106,10 @@ static void *nvm_write_thread(void *arg){
 #endif
     int local_slabNum = slabNum;
     int local_per_thread_counter = per_thread_counter;
-    int local_keyLen = keyLen;
     int local_lru_index = 0;
     int local_nvm_lru_index = 0;
     int local_slab_index = slab_index;
     double factor = 1.0;
-    fprintf(stderr, "nvm_write_thread(%ld), slab_index:%d, local_keyLen:%d, keyLen:%d\n",
-            pthread_self(), slab_index, local_keyLen, keyLen);
 
     // NOTE: ignoring overflow since that would take years of uptime in a
     // specific load pattern of never going to sleep.
@@ -3096,7 +3127,6 @@ static void *nvm_write_thread(void *arg){
         for (int x = POWER_SMALLEST; x < MAX_NUMBER_OF_SLAB_CLASSES; x++) {
 #endif //ENABLE_NVM
             unsigned int chunks_free;
-            int item_age;
             mem_limit_reached=false;
             // Avoid extra slab lock calls during heavy writing.
             chunks_free = slabs_available_chunks(x, &mem_limit_reached,
@@ -3114,8 +3144,11 @@ static void *nvm_write_thread(void *arg){
             unsigned int toNVM = 0;
             unsigned int toSSD = 0;
             int failed = 0;
+#ifdef USE_FREE_RATIO
             if(mem_limit_reached && ((target > last_target[x]) || (chunks_free < target * settings.slab_automove_freeratio) || (chunks_free < last_chunks_free[x] * settings.slab_automove_freeratio))){
-                // storage_write() will fail and cut loop after filling write buffer.
+#else
+            if(mem_limit_reached && ((target > last_target[x]) || (chunks_free < target * factor) || (chunks_free < last_chunks_free[x] * factor))){
+#endif                // storage_write() will fail and cut loop after filling write buffer.
                 __sync_fetch_and_add(&IsWriting, 1);
                 while (((chunks_free + toNVM < target * factor))) {
                     int ret = 0;
@@ -3154,18 +3187,11 @@ static void *nvm_write_thread(void *arg){
 #endif
             } else {
                 mem_limit_reached = false;
-//                fprintf(stderr, "nvm_write_thread(%ld): slab:%d, slab_index:%d, chunks_free:%d,last_chunks_free:%d, last_target:%d, target:%d\n",
-//                                pthread_self(), x, slab_index, chunks_free, last_chunks_free[x], last_target[x], target);
             }
 
 
             if( toNVM != 0 || toSSD != 0){
                 counter ++;
-                if(counter % 10000 == 0  && slab_index == 0){
-                    fprintf(stderr, "nvm_write_thread(%ld): slab:%d,chunks_free:%d,last_chunks_free:%d, last_target:%d, "
-                                    "toNVM:%d, toSSD:%d, totalFree:%d, item_age:%d, target:%d, asso_delet:%ld\n",
-                            pthread_self(), x, chunks_free, last_chunks_free[x], last_target[x], toNVM, toSSD, totalFree, item_age, target,asso_delet);
-                }
                 totalToNVM += toNVM;
                 totalFree += toNVM;
             }
@@ -3197,7 +3223,118 @@ static void *nvm_write_thread(void *arg){
     }
     return NULL;
 }
+#if  !defined(DRAM_CACHE)&& defined(ASY_NVM_SWAP)
 
+int nvm_swap_id = 0;
+#define SWAP_TRY 500
+static void *nvm_swap_thread(void *arg){
+    int thread_index = __sync_fetch_and_add(&nvm_swap_id, 1);
+    thread_type = NVM_SWAP_THREAD;
+    slab_index = thread_index *  (slabNum / NVM_SWAP_COUNT);
+    per_thread_counter = slabNum / NVM_SWAP_COUNT;
+    if(thread_index == (NVM_SWAP_COUNT - 1)){
+        per_thread_counter = slabNum - slab_index;
+    }
+    slab_span = slabNum;
+    slab_min = 0;
+    int try = SWAP_TRY;
+    // NOTE: ignoring overflow since that would take years of uptime in a
+    // specific load pattern of never going to sleep.
+    while (1) {
+        // cache per-loop to avoid calls to the slabs_clsid() search loop
+        unsigned int totalToDRAM = 0;
+        for (int i = 0; i < 64 / NVM_SWAP_COUNT; ++i) {
+            int id = i * NVM_SWAP_COUNT + thread_index;
+
+            NVM_SWAP_QUEUE*  queue = &nvmSwapQueue[id];
+            if (queue->end<= queue->start){
+                continue;
+            }
+            item* old_it = queue->hot_items[queue->start % NVM_SWAP_QUEUE_SIZE];
+            if (old_it == NULL){
+                continue;
+            }
+            queue->start ++;
+            if (!(IsHot(old_it)&&(old_it->it_flags & ITEM_LINKED))){
+                continue;
+            }
+            totalToDRAM ++;
+            uint32_t hv = hash(ITEM_key(old_it), old_it->nkey);
+            /* Attempt to hash item lock the "search" item. If locked, no
+             * other callers can incr the refcount. Also skip ourselves. */
+            if ((item_trylock(hv)) == NULL){
+//        fprintf(stderr, "nvm_swap_thread item_trylock fail \n");
+                continue;
+            }
+            if (!(IsHot(old_it)&&(old_it->it_flags & ITEM_LINKED))){
+                item_unlock(hv);
+//        fprintf(stderr, "nvm_swap_thread old_it check fail \n");
+                continue;
+            }
+#ifdef MEM_MOD
+            item *it = old_it;
+      item_hdr *hdr = (item_hdr *)ITEM_data(it);
+      if(hdr->cache_item != NULL){
+         item_unlock(hv);
+         continue;
+      }
+#endif
+            item* new_it = NULL;
+            new_it = do_item_alloc(NULL, keyLen, 0, 0, old_it->nbytes + 2);
+            if(new_it == NULL){
+                item_unlock(hv);
+//        fprintf(stderr, "nvm_swap_thread do_item_alloc fail \n");
+                continue;
+            }
+
+            refcount_incr(old_it);
+            if(old_it->refcount < 2) {
+                fprintf(stderr, "nvm_swap_thread error\n");
+                exit(0);
+            }
+            struct lru_pull_tail_return it_info = {old_it, hv};
+
+#ifdef MEM_MOD
+
+            /* First, storage for the header object */
+    item* nvm_data = (item*) ((item_hdr*)ITEM_data(it))->nvmptr;
+    memcpy((char *)new_it+READ_OFFSET,
+           (char *)nvm_data+READ_OFFSET, ITEM_ntotal(it)-READ_OFFSET);
+    memcpy(ITEM_key(new_it), ITEM_key(it), it->nkey);
+
+    new_it->nbytes = it->nbytes;
+    new_it->nkey = it->nkey;
+
+    item_link_q(new_it);
+    hdr->cache_item = new_it;
+    new_it->h_next = it;
+    do_item_remove(it);
+    item_unlock(it_info.hv);
+#ifdef M_STAT
+    __sync_fetch_and_add(&NVMtoDRAMswap, 1);
+#endif //M_STAT
+#else
+            swap_nvm_to_dram(&it_info, new_it);
+#endif
+        }
+        if (totalToDRAM == 0 ){
+            if(IsWriting){
+                usleep(10000);
+            }else{
+                if(try == 0){
+                    usleep(10000);
+                    try = SWAP_TRY;
+                }else{
+                    try --;
+                }
+            }
+
+        }
+    }
+    return NULL;
+
+}
+#else
 static void *nvm_swap_thread(void *arg){
 #if  !defined(DRAM_CACHE) && !defined(MEM_MOD)
     void *storage = arg;
@@ -3248,6 +3385,7 @@ static void *nvm_swap_thread(void *arg){
     return NULL;
 
 }
+#endif
 
 #endif //NO_EXT
 
@@ -3268,13 +3406,15 @@ int start_nvm_write_thread(void *arg) {
 int start_nvm_swap_thread(void *arg) {
 #ifndef NO_EXT
     int ret;
-
-    if ((ret = pthread_create(&nvm_swap_tid, NULL,
-                              nvm_swap_thread, arg)) != 0) {
-        fprintf(stderr, "Can't create nvm_swap thread: %s\n",
-                strerror(ret));
-        return -1;
+    for (int i = 0; i < NVM_SWAP_COUNT; ++i) {
+        if ((ret = pthread_create(&nvm_swap_tid, NULL,
+                                  nvm_swap_thread, arg)) != 0) {
+            fprintf(stderr, "Can't create nvm_swap thread: %s\n",
+                    strerror(ret));
+            return -1;
+        }
     }
+
 #endif
     return 0;
 }
@@ -3321,7 +3461,12 @@ void *nvm_init_config(struct settings *s){
     s->nvm_threadcount = 4;
     s->nvm_limit = 1 << 30;
     s->nvm_file = NULL;
+#ifdef USE_FREE_RATIO
     s->nvm_block_size = 64 * 1024 * 1024;
+
+#else
+    s->nvm_block_size = 1 * 1024 * 1024;
+#endif
     cf->io_threadcount = s->nvm_threadcount;
     cf->block_size = s->nvm_block_size;
     return cf;
@@ -3353,6 +3498,10 @@ void nvm_init(void *conf){
 #else
     nvm_slabs_init(data, cf->limit, false, false);
 #endif
+    for (int i = 0; i < 64; ++i) {
+        nvmSwapQueue[i].start = 0;
+        nvmSwapQueue[i].end = 0;
+    }
 }
 
 
@@ -3367,299 +3516,4 @@ int nvm_get_item(conn *c, item *it, mc_resp *resp) {
     memcpy(data, hdr->nvmptr, it->nbytes);
 return 0;
 }
-
-
-void write_nt_64(void *dst, void *src) {
-    __asm__ volatile(
-            "vmovntdqa  (%[data]), %%zmm0 \n"
-            WRITE_NT_64_ASM
-            :
-    : [addr] "r" (dst), [data] "r" (src)
-    : "%zmm0"
-    );
-}
-
-void write_nt_128(void *dst, void *src) {
-    __asm__ volatile(
-            "vmovntdqa  (%[data]), %%zmm0 \n"
-            WRITE_NT_128_ASM
-            :
-    : [addr] "r" (dst), [data] "r" (src)
-    : "%zmm0"
-    );
-}
-
-void write_nt_256(void *dst, void *src) {
-    __asm__ volatile(
-            "vmovntdqa  (%[data]), %%zmm0 \n"
-            WRITE_NT_256_ASM
-            :
-    : [addr] "r" (dst), [data] "r" (src)
-    : "%zmm0"
-    );
-}
-
-void write_nt_512(void *dst, void *src) {
-    __asm__ volatile(
-            "vmovntdqa  (%[data]), %%zmm0 \n"
-            WRITE_NT_512_ASM
-            :
-    : [addr] "r" (dst), [data] "r" (src)
-    : "%zmm0"
-    );
-}
-
-void write_nt_1024(void *dst, void *src) {
-    __asm__ volatile(
-            "vmovntdqa  (%[data]), %%zmm0 \n"
-            WRITE_NT_1024_ASM
-            :
-    : [addr] "r" (dst), [data] "r" (src)
-    : "%zmm0"
-    );
-}
-
-void write_nt_2048(void *dst, void *src) {
-    __asm__ volatile(
-            "vmovntdqa  (%[data]), %%zmm0 \n"
-            WRITE_NT_2048_ASM
-            :
-    : [addr] "r" (dst), [data] "r" (src)
-    : "%zmm0"
-    );
-}
-
-void write_nt_4096(void *dst, void *src) {
-    __asm__ volatile(
-            "vmovntdqa  (%[data]), %%zmm0 \n"
-            WRITE_NT_4096_ASM
-            :
-    : [addr] "r" (dst), [data] "r" (src)
-    : "%zmm0"
-    );
-}
-
-void write_nt_8192(void *dst, void *src) {
-    __asm__ volatile(
-            "vmovntdqa  (%[data]), %%zmm0 \n"
-            WRITE_NT_8192_ASM
-            :
-    : [addr] "r" (dst), [data] "r" (src)
-    : "%zmm0"
-    );
-}
-
-void write_nt_16384(void *dst, void *src) {
-    __asm__ volatile(
-            "vmovntdqa  (%[data]), %%zmm0 \n"
-            WRITE_NT_8192_ASM
-            "add $8192, %[addr]\n"
-            WRITE_NT_8192_ASM
-            : [addr] "+r" (dst)
-            : [data] "r" (src)
-            : "%zmm0"
-            );
-}
-
-void write_nt_32768(void *dst, void *src) {
-    __asm__ volatile(
-            "vmovntdqa  (%[data]), %%zmm0 \n"
-            EXEC_4_TIMES(
-                    WRITE_NT_8192_ASM
-                    "add $8192, %[addr]\n"
-                    )
-                    : [addr] "+r" (dst)
-                    : [data] "r" (src)
-                    : "%zmm0"
-                    );
-}
-
-void write_nt_65536(void *dst, void *src) {
-    __asm__ volatile(
-            "vmovntdqa  (%[data]), %%zmm0 \n"
-            EXEC_8_TIMES(
-                    WRITE_NT_8192_ASM
-                    "add $8192, %[addr]\n"
-                    )
-                    : [addr] "+r" (dst)
-                    : [data] "r" (src)
-                    : "%zmm0"
-                    );
-}
-
-void memcpy_nt_128(void *dst, void *src) {
-    __asm__ volatile(
-            "vmovntdqa (%[data]), %%zmm0 \n"
-            "vmovntdqa 1*64(%[data]), %%zmm1 \n"
-            "vmovntdq %%zmm0, 0(%[addr]) \n"\
-            "vmovntdq %%zmm1, 1*64(%[addr]) \n"
-            :
-            : [addr] "r" (dst), [data] "r" (src)
-            : "%zmm0", "%zmm1"
-            );
-}
-
-void memcpy_nt_256(void *dst, void *src) {
-    __asm__ volatile(
-            "vmovntdqa (%[data]), %%zmm0 \n"
-            "vmovntdqa 1*64(%[data]), %%zmm1 \n"
-            "vmovntdqa 2*64(%[data]), %%zmm2 \n"
-            "vmovntdqa 3*64(%[data]), %%zmm3 \n"
-            "vmovntdq %%zmm0, 0(%[addr]) \n"
-            "vmovntdq %%zmm1, 1*64(%[addr]) \n"
-            "vmovntdq %%zmm2, 2*64(%[addr]) \n"
-            "vmovntdq %%zmm3, 3*64(%[addr]) \n"
-            :
-            : [addr] "r" (dst), [data] "r" (src)
-            : "%zmm0", "%zmm1", "%zmm2", "%zmm3"
-            );
-}
-
-void memcpy_nt_512(void *dst, void *src) {
-    __asm__ volatile(
-            "vmovntdqa (%[data]), %%zmm0 \n"
-            "vmovntdqa 1*64(%[data]), %%zmm1 \n"
-            "vmovntdqa 2*64(%[data]), %%zmm2 \n"
-            "vmovntdqa 3*64(%[data]), %%zmm3 \n"
-            "vmovntdqa 4*64(%[data]), %%zmm4 \n"
-            "vmovntdqa 5*64(%[data]), %%zmm5 \n"
-            "vmovntdqa 6*64(%[data]), %%zmm6 \n"
-            "vmovntdqa 7*64(%[data]), %%zmm7 \n"
-            "vmovntdq %%zmm0, 0*64(%[addr]) \n"
-            "vmovntdq %%zmm1, 1*64(%[addr]) \n"
-            "vmovntdq %%zmm2, 2*64(%[addr]) \n"
-            "vmovntdq %%zmm3, 3*64(%[addr]) \n"
-            "vmovntdq %%zmm4, 4*64(%[addr]) \n"
-            "vmovntdq %%zmm5, 5*64(%[addr]) \n"
-            "vmovntdq %%zmm6, 6*64(%[addr]) \n"
-            "vmovntdq %%zmm7, 7*64(%[addr]) \n"
-            :
-            : [addr] "r" (dst), [data] "r" (src)
-            : "%zmm0", "%zmm1", "%zmm2", "%zmm3",
-            "%zmm4", "%zmm5", "%zmm6", "%zmm7"
-            );
-}
-
-void memcpy_nt_1024(void *dst, void *src) {
-    __asm__ volatile(
-            "vmovntdqa (%[data]), %%zmm0 \n"
-            "vmovntdqa 1*64(%[data]), %%zmm1 \n"
-            "vmovntdqa 2*64(%[data]), %%zmm2 \n"
-            "vmovntdqa 3*64(%[data]), %%zmm3 \n"
-            "vmovntdqa 4*64(%[data]), %%zmm4 \n"
-            "vmovntdqa 5*64(%[data]), %%zmm5 \n"
-            "vmovntdqa 6*64(%[data]), %%zmm6 \n"
-            "vmovntdqa 7*64(%[data]), %%zmm7 \n"
-            "vmovntdqa 8*64(%[data]), %%zmm8 \n"
-            "vmovntdqa 9*64(%[data]), %%zmm9 \n"
-            "vmovntdqa 10*64(%[data]), %%zmm10 \n"
-            "vmovntdqa 11*64(%[data]), %%zmm11 \n"
-            "vmovntdqa 12*64(%[data]), %%zmm12 \n"
-            "vmovntdqa 13*64(%[data]), %%zmm13 \n"
-            "vmovntdqa 14*64(%[data]), %%zmm14 \n"
-            "vmovntdqa 15*64(%[data]), %%zmm15 \n"
-            "vmovntdq %%zmm0, 0*64(%[addr]) \n"
-            "vmovntdq %%zmm1, 1*64(%[addr]) \n"
-            "vmovntdq %%zmm2, 2*64(%[addr]) \n"
-            "vmovntdq %%zmm3, 3*64(%[addr]) \n"
-            "vmovntdq %%zmm4, 4*64(%[addr]) \n"
-            "vmovntdq %%zmm5, 5*64(%[addr]) \n"
-            "vmovntdq %%zmm6, 6*64(%[addr]) \n"
-            "vmovntdq %%zmm7, 7*64(%[addr]) \n"
-            "vmovntdq %%zmm8, 8*64(%[addr]) \n"
-            "vmovntdq %%zmm9, 9*64(%[addr]) \n"
-            "vmovntdq %%zmm10, 10*64(%[addr]) \n"
-            "vmovntdq %%zmm11, 11*64(%[addr]) \n"
-            "vmovntdq %%zmm12, 12*64(%[addr]) \n"
-            "vmovntdq %%zmm13, 13*64(%[addr]) \n"
-            "vmovntdq %%zmm14, 14*64(%[addr]) \n"
-            "vmovntdq %%zmm15, 15*64(%[addr]) \n"
-            :
-            : [addr] "r" (dst), [data] "r" (src)
-            : "%zmm0", "%zmm1", "%zmm2", "%zmm3",
-            "%zmm4", "%zmm5", "%zmm6", "%zmm7",
-            "%zmm8", "%zmm9", "%zmm10", "%zmm11",
-            "%zmm12", "%zmm13", "%zmm14", "%zmm15"
-            );
-}
-
-void memcpy_nt_2048(void *dst, void *src) {
-    __asm__ volatile(
-            "vmovntdqa (%[data]), %%zmm0 \n"
-            "vmovntdqa 1*64(%[data]), %%zmm1 \n"
-            "vmovntdqa 2*64(%[data]), %%zmm2 \n"
-            "vmovntdqa 3*64(%[data]), %%zmm3 \n"
-            "vmovntdqa 4*64(%[data]), %%zmm4 \n"
-            "vmovntdqa 5*64(%[data]), %%zmm5 \n"
-            "vmovntdqa 6*64(%[data]), %%zmm6 \n"
-            "vmovntdqa 7*64(%[data]), %%zmm7 \n"
-            "vmovntdqa 8*64(%[data]), %%zmm8 \n"
-            "vmovntdqa 9*64(%[data]), %%zmm9 \n"
-            "vmovntdqa 10*64(%[data]), %%zmm10 \n"
-            "vmovntdqa 11*64(%[data]), %%zmm11 \n"
-            "vmovntdqa 12*64(%[data]), %%zmm12 \n"
-            "vmovntdqa 13*64(%[data]), %%zmm13 \n"
-            "vmovntdqa 14*64(%[data]), %%zmm14 \n"
-            "vmovntdqa 15*64(%[data]), %%zmm15 \n"
-            "vmovntdqa 16*64(%[data]), %%zmm16 \n"
-            "vmovntdqa 17*64(%[data]), %%zmm17 \n"
-            "vmovntdqa 18*64(%[data]), %%zmm18 \n"
-            "vmovntdqa 19*64(%[data]), %%zmm19 \n"
-            "vmovntdqa 20*64(%[data]), %%zmm20 \n"
-            "vmovntdqa 21*64(%[data]), %%zmm21 \n"
-            "vmovntdqa 22*64(%[data]), %%zmm22 \n"
-            "vmovntdqa 23*64(%[data]), %%zmm23 \n"
-            "vmovntdqa 24*64(%[data]), %%zmm24 \n"
-            "vmovntdqa 25*64(%[data]), %%zmm25 \n"
-            "vmovntdqa 26*64(%[data]), %%zmm26 \n"
-            "vmovntdqa 27*64(%[data]), %%zmm27 \n"
-            "vmovntdqa 28*64(%[data]), %%zmm28 \n"
-            "vmovntdqa 29*64(%[data]), %%zmm29 \n"
-            "vmovntdqa 30*64(%[data]), %%zmm30 \n"
-            "vmovntdqa 31*64(%[data]), %%zmm31 \n"
-            "vmovntdq %%zmm0, 0*64(%[addr]) \n"
-            "vmovntdq %%zmm1, 1*64(%[addr]) \n"
-            "vmovntdq %%zmm2, 2*64(%[addr]) \n"
-            "vmovntdq %%zmm3, 3*64(%[addr]) \n"
-            "vmovntdq %%zmm4, 4*64(%[addr]) \n"
-            "vmovntdq %%zmm5, 5*64(%[addr]) \n"
-            "vmovntdq %%zmm6, 6*64(%[addr]) \n"
-            "vmovntdq %%zmm7, 7*64(%[addr]) \n"
-            "vmovntdq %%zmm8, 8*64(%[addr]) \n"
-            "vmovntdq %%zmm9, 9*64(%[addr]) \n"
-            "vmovntdq %%zmm10, 10*64(%[addr]) \n"
-            "vmovntdq %%zmm11, 11*64(%[addr]) \n"
-            "vmovntdq %%zmm12, 12*64(%[addr]) \n"
-            "vmovntdq %%zmm13, 13*64(%[addr]) \n"
-            "vmovntdq %%zmm14, 14*64(%[addr]) \n"
-            "vmovntdq %%zmm15, 15*64(%[addr]) \n"
-            "vmovntdq %%zmm16, 16*64(%[addr]) \n"
-            "vmovntdq %%zmm17, 17*64(%[addr]) \n"
-            "vmovntdq %%zmm18, 18*64(%[addr]) \n"
-            "vmovntdq %%zmm19, 19*64(%[addr]) \n"
-            "vmovntdq %%zmm20, 20*64(%[addr]) \n"
-            "vmovntdq %%zmm21, 21*64(%[addr]) \n"
-            "vmovntdq %%zmm22, 22*64(%[addr]) \n"
-            "vmovntdq %%zmm23, 23*64(%[addr]) \n"
-            "vmovntdq %%zmm24, 24*64(%[addr]) \n"
-            "vmovntdq %%zmm25, 25*64(%[addr]) \n"
-            "vmovntdq %%zmm26, 26*64(%[addr]) \n"
-            "vmovntdq %%zmm27, 27*64(%[addr]) \n"
-            "vmovntdq %%zmm28, 28*64(%[addr]) \n"
-            "vmovntdq %%zmm29, 29*64(%[addr]) \n"
-            "vmovntdq %%zmm30, 30*64(%[addr]) \n"
-            "vmovntdq %%zmm31, 31*64(%[addr]) \n"
-            :
-            : [addr] "r" (dst), [data] "r" (src)
-            : "%zmm0", "%zmm1", "%zmm2", "%zmm3",
-            "%zmm4", "%zmm5", "%zmm6", "%zmm7",
-            "%zmm8", "%zmm9", "%zmm10", "%zmm11",
-            "%zmm12", "%zmm13", "%zmm14", "%zmm15",
-            "%zmm16", "%zmm17", "%zmm18", "%zmm19",
-            "%zmm20", "%zmm21", "%zmm22", "%zmm23",
-            "%zmm24", "%zmm25", "%zmm26", "%zmm27",
-            "%zmm28", "%zmm29", "%zmm30", "%zmm31"
-            );
-}
-
-#endif //ENABLE_NVM
+#endif

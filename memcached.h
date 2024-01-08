@@ -62,9 +62,15 @@
 //#define BLOCK_SWAP
 #define UPDATE_TO_NVM
 #define  MIN_VALUE_SIZE 100
+//#define USE_FREE_RATIO
+
+
 //#define NUMA
+#ifdef USE_FREE_RATIO
 #define NVM_AIO
+#endif
 #define NVM_TNUM 4
+#define SAMPLE_HOT_COUNT
 //#define PRE_FIND
 //#define DEBUG
 //#define TEST_LATENCY
@@ -250,7 +256,8 @@ enum THREAD_TYPE{
     SWAP_THREAD,
     NVM_SWAP_THREAD,
     LRU_MAINTAIN_THREAD,
-    HANDLE
+    HANDLE,
+    LRU_STAT_THREAD,
 };
 
 enum bin_substates {
@@ -617,7 +624,7 @@ extern struct settings settings;
 #ifdef HEAT_COUNT
 #define HOT_ITEM_R_COUNT  HEAT_COUNT
 #else
-#define HOT_ITEM_R_COUNT 2
+#define HOT_ITEM_R_COUNT 1
 
 #endif
 #ifdef NVM_DRAM
@@ -626,9 +633,29 @@ extern struct settings settings;
 #define NVM_DRAM_R 8
 #endif
 #ifndef CLOCK_INTERVAL
-#define CLOCK_INTERVAL 10000
+#define CLOCK_INTERVAL 1000000
 #endif
 
+extern int hot_threadshold ;
+extern int warm_threadshold;
+#ifndef DRAM_R
+#define DRAM_R (0.05)
+#endif
+#ifndef NVM_R
+#define NVM_R (0.7)
+#endif
+#ifdef SAMPLE_HOT_COUNT
+#define MaxCount (hot_threadshold * 2)
+#define IsHot(it)  (((it->read_count >hot_threadshold)))
+#define IsWarm(it)  ((it->read_count > warm_threadshold ))
+#define IsHotForSwap(it)  ( (it->read_count > hot_threadshold))
+#define IsWarmForNoSwap(it)  ((it->read_count >= warm_threadshold))
+//#define IsWarmForNVM(it) ((it->read_count > HOT_ITEM_R_COUNT))
+//#define IsHotForDRAM(it)  ((it->read_count >  HOT_ITEM_R_COUNT* NVM_DRAM_R / 2))
+
+#define IsWarmForNVM(it) ((it->read_count > warm_threadshold))
+#define IsHotForDRAM(it)  ((it->read_count > hot_threadshold))
+#else
 
 #define MaxCount (HOT_ITEM_R_COUNT* NVM_DRAM_R * 2)
 #define IsHot(it)  ((current_time == it->time) && ((it->read_count > HOT_ITEM_R_COUNT* NVM_DRAM_R)))
@@ -637,7 +664,7 @@ extern struct settings settings;
 
 #define IsWarmForNVM(it) ((it->read_count > HOT_ITEM_R_COUNT))
 #define IsHotForDRAM(it)  ((it->read_count >  HOT_ITEM_R_COUNT* NVM_DRAM_R))
-
+#endif
 #define ITEM_NVM 8192
 
 #define ITEM_NULL 16384

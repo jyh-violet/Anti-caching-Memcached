@@ -609,13 +609,13 @@ inline void process_get_command(conn *c, token_t *tokens, size_t ntokens, bool r
                           char data[it->nbytes];
                           memcpy(data, ITEM_data(hdr->cache_item), it->nbytes);
                       } else{
-                          char data[it->nbytes];
-                          memcpy(data, hdr->nvmptr, it->nbytes);
+                         nvm_aio_get_item(c, it, it->nbytes);
+                        char data[it->nbytes];
+                        memcpy(data, ((item_hdr *)ITEM_data(it))->nvmptr, it->nbytes);
                       }
 #else
-#ifdef NVM_AIO
-                      nvm_aio_get_item(c, ((item_hdr *)ITEM_data(it))->nvmptr, it->nbytes);
-#else
+                      nvm_aio_get_item(c, it, it->nbytes);
+#ifndef NVM_AIO
                       char data[it->nbytes];
                       memcpy(data, ((item_hdr *)ITEM_data(it))->nvmptr, it->nbytes);
 #endif
@@ -2188,6 +2188,7 @@ bool process_update_command_sep(void *storage, char* key, char* value, int key_n
 #endif
             if(cache_it != NULL){
                 hdr->cache_item = cache_it;
+                                cache_it->h_next = new_it;
 //                memcpy(ITEM_key(cache_it), key, key_n);
                 memcpy(ITEM_data(cache_it), value, value_n + 2);
 //                cache_it->nkey = key_n;
@@ -2245,6 +2246,7 @@ bool process_update_command_sep(void *storage, char* key, char* value, int key_n
 #else
                     do_item_remove(hdr->cache_item);
 #endif
+                    hdr->cache_item->h_next = NULL;
                     hdr->cache_item = NULL;
                 }
             }

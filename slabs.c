@@ -1622,6 +1622,19 @@ bool if_nvm_limit_reached(void){
 #endif
     return reached & slabReached;
 }
+
+#ifndef FREE_SIZE
+#define FREE_SIZE (4L*1024*1024 )
+#endif
+
+#ifndef FREE_PAGES
+#define FREE_PAGES 4
+#endif
+#ifdef NVM_AS_DRAM
+#define SSD_FACTOR 64
+#else
+#define SSD_FACTOR 64
+#endif
 unsigned int slabs_available_chunks(const unsigned int id, bool *mem_flag,
         unsigned int *chunks_perslab, int local_slabNum, int slab_start, int slab_end) {
     unsigned int ret, slabs = 0, curr = 0;
@@ -1631,7 +1644,18 @@ unsigned int slabs_available_chunks(const unsigned int id, bool *mem_flag,
 
         p = &slabclass[id];
         if(mem_flag){
+#ifdef USE_FREE_RATIO
             *mem_flag = ((p->slabs) >= (((mem_limit + NVM_len)/ ((uint64_t)settings.slab_page_size)  * (1 - settings.slab_automove_freeratio))));
+#else
+#ifdef NVM_AS_DRAM
+            *mem_flag = slabclass[SLAB_GLOBAL_PAGE_POOL].slabs <= (SSD_FACTOR * FREE_PAGES);
+//            *mem_flag = slabclass[SLAB_GLOBAL_PAGE_POOL].slabs <= (FREE_SIZE * 4/ p->size / p->perslab);
+#else
+//            *mem_flag = slabclass[SLAB_GLOBAL_PAGE_POOL].slabs <= (FREE_SIZE/ p->size / p->perslab);
+            *mem_flag = slabclass[SLAB_GLOBAL_PAGE_POOL].slabs <= FREE_PAGES;
+#endif
+            //            *mem_flag = ((p->slabs) >= (((mem_limit + NVM_len)/ ((uint64_t)settings.slab_page_size)  * (1 - settings.slab_automove_freeratio))));
+#endif
         }
 
         slabs = p->slabs;
@@ -1647,9 +1671,15 @@ unsigned int slabs_available_chunks(const unsigned int id, bool *mem_flag,
 //        int perFree = (slabs * p->perslab) * settings.slab_automove_freeratio / local_slabNum;
         for (int i = slab_start; i < slab_end; ++i) {
             curr += p->slabs_meta[i].sl_curr;
+#ifdef USE_FREE_RATIO
             if (mem_flag != NULL){
                 *mem_flag |= (p->slabs_meta[i].sl_curr) <= 1;
             }
+#else
+//            if (mem_flag != NULL){
+//                *mem_flag |= (p->slabs_meta[i].sl_curr) <= 1;
+//            }
+#endif
         }
         ret = curr;
 #else
@@ -1662,9 +1692,22 @@ unsigned int slabs_available_chunks(const unsigned int id, bool *mem_flag,
 #ifndef ENABLE_NVM
             pthread_mutex_lock(&slabs_lock);
 #endif
+#ifdef USE_FREE_RATIO
             unsigned int hold_free = (slabs * p->perslab) * settings.slab_automove_freeratio;
             if (p->perslab * 1.5 > hold_free)
                 hold_free = p->perslab * 1.5;
+#else
+#ifdef NVM_AS_DRAM
+            //            unsigned int hold_free = (FREE_SIZE * 4/ p->size);
+            unsigned int hold_free = SSD_FACTOR * FREE_PAGES *  p->perslab;
+#else
+            unsigned int hold_free = p->perslab * FREE_PAGES;
+//            unsigned int hold_free = (FREE_SIZE/ p->size);
+#endif
+//            unsigned int hold_free = (slabs * p->perslab) * settings.slab_automove_freeratio;
+//            if (p->perslab * 1.5 > hold_free)
+//                hold_free = p->perslab * 1.5;
+#endif
 
 #ifdef ENABLE_NVM
             /*
@@ -1689,9 +1732,6 @@ unsigned int slabs_available_chunks(const unsigned int id, bool *mem_flag,
 #ifdef ENABLE_NVM
             if (settings.ext_free_memchunks[id] != hold_free) {
                 settings.ext_free_memchunks[id] = hold_free;
-                    fprintf(stderr, "slabs_available_chunks, ext_free_memchunks[%d]:%d, total_pages:%d, "
-                                    "chunks_per_page:%d, chunk_size:%d, free:%d, mem_malloced:%ld, mem_flag:%d, free pages:%d,free_memchunks:%d\n",
-                                    id, hold_free, slabs, p->perslab, p->size, curr, mem_malloced, *mem_flag, slabclass[SLAB_GLOBAL_PAGE_POOL].slabs, settings.ext_free_memchunks[id]);
             }
 #else
 if (settings.ext_free_memchunks[id] != hold_free) {
@@ -1703,18 +1743,26 @@ pthread_mutex_unlock(&slabs_lock);
 #endif
         }
     }else{
+#ifdef USE_FREE_RATIO
         if(mem_flag){
             *mem_flag = (nvm_slabclass[SLAB_GLOBAL_PAGE_POOL].slabs <= (NVM_size / settings.nvm_block_size * settings.slab_automove_freeratio));
         }
-
+#endif
         p = &nvm_slabclass[id - MAX_NUMBER_OF_SLAB_CLASSES];
         slabs = p->slabs;
+#ifndef USE_FREE_RATIO
+        if(mem_flag){
+            *mem_flag  = false;
+        }
+#endif
         if(slabs == 0){
             if (chunks_perslab != NULL)
                 *chunks_perslab = p->perslab;
+#ifdef USE_FREE_RATIO
             if(mem_flag != NULL){
                 *mem_flag = false;
             }
+#endif
             return 0;
         }
 #ifdef SLAB_PART
@@ -1725,15 +1773,26 @@ pthread_mutex_unlock(&slabs_lock);
                 *mem_flag |= (p->slabs_meta[i].sl_curr) <=  1;
             }
         }
+#ifndef USE_FREE_RATIO
+        if(mem_flag && slabs > 0){
+//            *mem_flag = nvm_slabclass[SLAB_GLOBAL_PAGE_POOL].slabs <= (FREE_SIZE * 4 /settings.nvm_block_size);
+            *mem_flag |= (nvm_slabclass[SLAB_GLOBAL_PAGE_POOL].slabs <= SSD_FACTOR * FREE_PAGES)
+                         && (curr <= SSD_FACTOR*FREE_PAGES* p->perslab / slabNum *(slab_end - slab_start));
+//            *mem_flag = (nvm_slabclass[SLAB_GLOBAL_PAGE_POOL].slabs <= (NVM_size / settings.nvm_block_size * settings.slab_automove_freeratio));
+        }
+#endif
         ret = curr;
 #else
         ret = p->sl_curr;
         curr = p->sl_curr;
 #endif
-
-
+#ifdef USE_FREE_RATIO
         unsigned int hold_free = (slabs * p->perslab) * settings.slab_automove_freeratio;
-
+#else
+//        unsigned int hold_free = (FREE_SIZE* 4 / p->size);
+        unsigned int hold_free = p->perslab * FREE_PAGES * SSD_FACTOR;
+//        unsigned int hold_free = (slabs * p->perslab) * settings.slab_automove_freeratio;
+#endif
         if (mem_flag != NULL){
             /*
             slabclass_t * g = &nvm_slabclass[SLAB_GLOBAL_PAGE_POOL];
@@ -1750,11 +1809,6 @@ pthread_mutex_unlock(&slabs_lock);
 
         if (settings.ext_free_memchunks[id] != hold_free) {
             settings.ext_free_memchunks[id] = hold_free;
-            if(slab_index == 0){
-                fprintf(stderr, "slabs_available_chunks, ext_free_memchunks[%d]:%d, total_pages:%d, "
-                                "chunks_per_page:%d, chunk_size:%d, free:%d, mem_malloced:%ld\n",
-                                id, hold_free, slabs, p->perslab, p->size, curr, mem_malloced);
-            }
         }
     }
 
@@ -2535,4 +2589,64 @@ int get_slab_size(int  slab_id){
 
 void change_slab_alloc_free_flag(int slab_id, int slab_counter){
 
+}
+
+
+int hot_threadshold = HOT_ITEM_R_COUNT* NVM_DRAM_R;
+int warm_threadshold = HOT_ITEM_R_COUNT;
+
+void *lru_statistics_thread(void *arg) {
+    thread_type = LRU_STAT_THREAD;
+    int i;
+    int read_count[512];
+    double sample_ratio = 0.1;
+    srandom(time(0));
+    while (true) {
+        sleep(5);
+        memset(read_count, 0, sizeof(read_count));
+        int total_sample = 0;
+        for (i = 1; i < MAX_NUMBER_OF_SLAB_CLASSES; i++) {
+
+            slabclass_t *p = &slabclass[i];
+            if(p->slabs == 0){
+                continue;
+            }
+
+            for (int j = 0; j < p->slabs; ++j) {
+
+                char* slab_p = (char*)p->slab_list[j];
+                for (int k = 0; k < p->perslab * sample_ratio; ++k) {
+                    int id = random() % p->perslab;
+                    item* it = (item*)(slab_p + id * p->size);
+                    if((it->it_flags & ITEM_LINKED) && !(it->it_flags& ITEM_SLABBED)
+                       && it->refcount >= 1 && it->read_count > 0){
+                        total_sample ++;
+                        read_count[it->read_count] ++;
+                    }
+                }
+            }
+        }
+        if (total_sample == 0){
+            continue;
+        }
+        int count = 0;
+        for (int j = 256; j >0 ; j--) {
+            if(read_count[j] == 0){
+                continue;
+            }
+            if(count < total_sample * DRAM_R && count + read_count[j] > total_sample * DRAM_R){
+                hot_threadshold = j;
+            }
+            if(count < total_sample * NVM_R && count + read_count[j] > total_sample * NVM_R){
+                warm_threadshold = j;
+            }
+            count += read_count[j];
+        }
+        if(hot_threadshold <= warm_threadshold){
+            hot_threadshold = warm_threadshold + 1;
+        }
+
+    }
+
+    return NULL;
 }

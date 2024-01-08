@@ -116,7 +116,8 @@ typedef struct {
 #define AIO_COND
 #ifdef AIO
 #define AIO_QUEUE_SIZE 1024*1024
-#define HANDLE_AIO_THREAD 32
+#define HANDLE_AIO_THREAD CORE_COUNT
+
 #define NVM_AIO_THREAD 4
 
 typedef struct Aio{
@@ -407,8 +408,6 @@ void *extstore_init(struct extstore_conf_file *fh, struct extstore_conf *cf,
             perror("extstore open");
             free(e);
             return NULL;
-        } else{
-            fprintf(stderr, "extstore_init open:%d\n",f->fd);
         }
         // use an fcntl lock to help avoid double starting.
         struct flock lock;
@@ -438,7 +437,6 @@ void *extstore_init(struct extstore_conf_file *fh, struct extstore_conf *cf,
     }
     e->page_count = temp_page_count;
 
-    fprintf(stderr, "page_count:%d\n", e->page_count);
     e->pages = calloc(e->page_count, sizeof(store_page));
     if (e->pages == NULL) {
         *res = EXTSTORE_INIT_OOM;
@@ -862,9 +860,6 @@ int extstore_write_request(void *ptr, unsigned int bucket,
         pthread_mutex_lock(&e->mutex);
         p = _allocate_page(e, local_bucket, free_bucket);
         pthread_mutex_unlock(&e->mutex);
-        if(p){
-            fprintf(stderr, "allocate new page:%d\n", p->id);
-        }
     }
     if (p == NULL){
         fprintf(stderr, "allocate page error\n");
@@ -1290,6 +1285,8 @@ int extstore_submit(void *ptr, obj_io *io) {
     return 0;
 }
 int extstore_submit_nvm(void *ptr, char* src, int len) {
+#ifdef AIO
+
     store_engine *e = (store_engine *) ptr;
     NVM_Aio_queue *aioQueue = &e->nvmAioQueue[txn_threadId];
     if (aioQueue->end - aioQueue->start >= AIO_QUEUE_SIZE) {
@@ -1304,6 +1301,7 @@ int extstore_submit_nvm(void *ptr, char* src, int len) {
 #endif
         aioQueue->end++;
     }
+#endif
     return 1;
 }
 int extstore_submit_opt(void *ptr, obj_io *io, bool no_swap) {

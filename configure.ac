@@ -88,30 +88,24 @@ AC_PROG_INSTALL
 
 AC_ARG_ENABLE(nvm,
   [AS_HELP_STRING([--disable-nvm], [Disable external storage (nvm)])])
-AC_ARG_ENABLE(no_ext,
-  [AS_HELP_STRING([--disable-ext], [Disable external storage)])])
 AC_ARG_ENABLE(tuple_swap,
   [AS_HELP_STRING([--disable-tuple], [Disable tuple swap)])])
-AC_ARG_ENABLE(dram_cache,
-  [AS_HELP_STRING([--disable-tuple], [Disable dram as cache)])])
-  AC_ARG_ENABLE(mem_mod,
-    [AS_HELP_STRING([--disable-tuple], [Disable dram as cache)])])
-AC_ARG_ENABLE(value_500,
-  [AS_HELP_STRING([--disable-tuple], [value size)])])
-AC_ARG_ENABLE(value_2000,
-  [AS_HELP_STRING([--disable-tuple], [value size)])])
+AC_ARG_ENABLE(mem_mod,
+    [AS_HELP_STRING([--enable_mem_mod], [set mem mod, i.e., DRAM as the cache of NVM])])
 AC_ARG_ENABLE(heat_count,
   [AS_HELP_STRING([--disable-tuple], [value size)])])
+AC_ARG_ENABLE(cpu_count,
+    [AS_HELP_STRING([--cpu_count], [physical cpu count)])])
 AC_ARG_ENABLE(clock_interval,
-  [AS_HELP_STRING([--disable-tuple], [value size)])])
+  [AS_HELP_STRING([--clock_interval], [clock interval (us)])])
 AC_ARG_ENABLE(nvm_dram,
-    [AS_HELP_STRING([--disable-tuple], [value size)])])
+    [AS_HELP_STRING([-nvm_dram_ratio], [the ratio of NVM size to DRAM size)])])
 AC_ARG_ENABLE(value_size,
-  [AS_HELP_STRING([--disable-tuple], [value size)])])
+  [AS_HELP_STRING([--value_size], [value size)])])
 AC_ARG_ENABLE(nvm_as_dram,
-  [AS_HELP_STRING([--disable-tuple], [Disable nvm as dram)])])
-AC_ARG_ENABLE(dram_test,
-    [AS_HELP_STRING([--dram simulate], [Disable dram test)])])
+  [AS_HELP_STRING([--enable-nvm_as_dram], [enable nvm as dram)])])
+AC_ARG_ENABLE(swap_count,
+  [AS_HELP_STRING([--swap_count], [swap thread count)])])
 
 AC_ARG_ENABLE(extstore,
   [AS_HELP_STRING([--disable-extstore], [Disable external storage (extstore)])])
@@ -258,6 +252,18 @@ if test "x$heat_count" != "x"; then
     AC_DEFINE_UNQUOTED([HEAT_COUNT],[$heat_count],[Set to nonzero if you want to enable tuple swap])
 fi
 
+if test "x$cpu_count" != "x"; then
+    AC_DEFINE_UNQUOTED([CORE_COUNT],[$cpu_count],[Set to nonzero if you want to enable tuple swap])
+else
+    AC_DEFINE_UNQUOTED([CORE_COUNT],[16],[Set to nonzero if you want to enable tuple swap])
+fi
+
+
+
+if test "x$swap_count" != "x"; then
+    AC_DEFINE_UNQUOTED([SWAP_COUNT],[$swap_count],[Set to nonzero if you want to enable tuple swap])
+fi
+
 if test "x$clock_interval" != "x"; then
     AC_DEFINE_UNQUOTED([CLOCK_INTERVAL],[$clock_interval],[Set to nonzero if you want to enable tuple swap])
 fi
@@ -322,8 +328,11 @@ AM_CONDITIONAL([MEM_MOD],[test "$mem_mod" = "yes"])
 AM_CONDITIONAL([VALUE_500],[test "$value_500" = "yes"])
 AM_CONDITIONAL([VALUE_2000],[test "$value_2000" = "yes"])
 AM_CONDITIONAL([HEAT_COUNT],[test "$heat_count" != ""])
+AM_CONDITIONAL([HOT_COUNT],[test "$hot_count" != ""])
 AM_CONDITIONAL([CLOCK_INTERVAL],[test "$clock_interval" != ""])
 AM_CONDITIONAL([NVM_DRAM],[test "$nvm_dram" != ""])
+AM_CONDITIONAL([SWAP_COUNT],[test "$swap_count" != ""])
+AM_CONDITIONAL([CORE_COUNT],[test "$cpu_count" != ""])
 
 AM_CONDITIONAL([VALUE_SIZE],[test "$value_size" != ""])
 AM_CONDITIONAL([HOT_ITEM_R_COUNT],[test "$hot_count" = "yes"])

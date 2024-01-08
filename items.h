@@ -1,6 +1,7 @@
 #define HOT_LRU 0
 #define WARM_LRU 64
 #define COLD_LRU 128
+#define NVM_HOT_LRU 128
 #define TEMP_LRU 192
 #define NVM_SLAB 16384
 

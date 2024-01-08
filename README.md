@@ -43,12 +43,6 @@ sudo apt-get install libpmem1-debug librpmem1-debug libpmemblk1-debug libpmemlog
 ```
 parameters for configure:
 
-- heat_count      : heatConst to define temperature levels, default: 2
-
-- clock_interval  : interval of global timers in microseconds, default: 10000
-
-- nvm_dram        : ratio of NVM sizes to DRAM sizes, default: 8
-
 - nvm_as_dram=yes : the Anti-2 variant
 - mem_mod=yes     : the Anti-NVM variant
 
@@ -76,7 +70,7 @@ TXN_FILE = "memcached_client/workloads/data/txnsc_zipf_int_50M.dat"
 # run
 
 ```console
-./memcached -m 4096 -o slab_automove_freeratio=0.2 -o nvm_path=nvm.bin:32G -o ext_path=ssd.bin:120G  -t 32 -o ext_threads=8 2>out
+./memcached -m 4096 -o nvm_path=nvm.bin:32G -o ext_path=ssd.bin:120G  -t 32 -o ext_threads=8 2>out
 
 parameters:
 
@@ -90,7 +84,6 @@ parameters:
 
 -o ext_threads              : number of evicting threads
 
--o slab_automove_freeratio  : freeRatio
-
 others                      : Memcached parameters, please refer to     README-forMem.md
 
+result can be found in ./log file
