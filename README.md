@@ -78,7 +78,7 @@ parameters:
 
 -o nvm_path                 : location and size of NVM file (nvm.bin:16G --> 16GB NVM file located at nvm.bin)
 
--o ext_path                 : location and size of SSD file (ssd.bin:120G --> 120GB NVM file located at ssd.bin)
+-o ext_path                 : location and size of SSD file (ssd.bin:120G --> 120GB SSD file located at ssd.bin)
 
 -t                          : number of workers
 
