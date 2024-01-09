@@ -71,7 +71,7 @@ TXN_FILE = "memcached_client/workloads/data/txnsc_zipf_int_50M.dat"
 
 ```console
 ./memcached -m 4096 -o nvm_path=nvm.bin:32G -o ext_path=ssd.bin:120G  -t 32 -o ext_threads=8 2>out
-
+```
 parameters:
 
 -m                          : DRAM size in MB (-m 4096--> 4GB DRAM)
