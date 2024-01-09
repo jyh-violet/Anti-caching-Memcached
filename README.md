@@ -17,7 +17,7 @@ sudo apt-get install libpmem1-debug librpmem1-debug libpmemblk1-debug libpmemlog
     - modifications about `item` struct, temperature levels definition
 - item.c, slab.c
     - modifications about Lazy LRU and partitioned memory management
-    - increasing NVM slabs
+    - adding NVM slabs
 
 - storage.c
     - modifications about data swapping: 
