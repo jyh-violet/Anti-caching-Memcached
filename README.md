@@ -53,7 +53,7 @@ parameters for configure:
 ```
 
 # Config file
-config.cfg
+config.cfg: which will be read by the program automatically and should be in the same path as the executable file. The following is an example.
 ```
 # recordcount in YCSB config file
 LOAD_SIZE = 50000000
