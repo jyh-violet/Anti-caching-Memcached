@@ -84,7 +84,12 @@ parameters:
 
 -o ext_threads              : number of evicting threads
 
-## Bibliography
+
+others                      : Memcached parameters, please refer to     README-forMem.md
+
+result can be found in ./log file
+
+# Bibliography
 ```
 @inproceedings{DBLP:conf/edbt/JiH0HT24,
   author       = {Yunhong Ji and
@@ -111,6 +116,3 @@ parameters:
   bibsource    = {dblp computer science bibliography, https://dblp.org}
 }
 ```
-others                      : Memcached parameters, please refer to     README-forMem.md
-
-result can be found in ./log file
