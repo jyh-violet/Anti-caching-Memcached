@@ -92,14 +92,27 @@ result can be found in ./log file
 # Bibliography
 ```
 @inproceedings{DBLP:conf/edbt/JiH0HT24,
-  author       = {***},
-  editor       = {***},
-  title        = {***},
+   author       = {Yunhong Ji and
+                  Wentao Huang and
+                  Xuan Zhou and
+                  Bingsheng He and
+                  Kian{-}Lee Tan},
+  editor       = {Letizia Tanca and
+                  Qiong Luo and
+                  Giuseppe Polese and
+                  Loredana Caruccio and
+                  Xavier Oriol and
+                  Donatella Firmani},
+  title        = {TaC: An Anti-Caching Key-Value Store on Heterogeneous Memory Architectures},
   booktitle    = {Proceedings 27th International Conference on Extending Database Technology,
                   {EDBT} 2024, Paestum, Italy, March 25 - March 28},
   pages        = {474--487},
   publisher    = {OpenProceedings.org},
   year         = {2024},
-  timestamp    = {Fri, 22 Mar 2024 11:12:28 +0100}
+  url          = {https://doi.org/10.48786/edbt.2024.41},
+  doi          = {10.48786/EDBT.2024.41},
+  timestamp    = {Fri, 22 Mar 2024 11:12:28 +0100},
+  biburl       = {https://dblp.org/rec/conf/edbt/JiH0HT24.bib},
+  bibsource    = {dblp computer science bibliography, https://dblp.org}
 }
 ```
